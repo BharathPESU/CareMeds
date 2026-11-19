@@ -10,7 +10,7 @@ const previewRoleSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  if (isPostgresConfigured()) {
+  if (isPostgresConfigured() && process.env.DISABLE_PREVIEW_ROLES === 'true') {
     return NextResponse.json(
       { error: 'Preview role switching is disabled when Supabase Postgres is connected.' },
       { status: 403 }

@@ -7,11 +7,13 @@ export async function GET() {
   const store = loadStore();
   const ctx = await getSessionContext();
 
+  const isPreview = !isPostgresConfigured() || process.env.DISABLE_PREVIEW_ROLES !== 'true';
+
   if (!ctx) {
     return NextResponse.json({
       authenticated: false,
       setupCompleted: store.systemSettings.setup_completed === 'true',
-      previewMode: !isPostgresConfigured(),
+      previewMode: isPreview,
       facilityName: store.facility.name,
       defaultTheme: store.systemSettings.default_theme || 'clinical-calm',
       defaultColorMode: store.systemSettings.default_color_mode || 'system',
@@ -28,7 +30,7 @@ export async function GET() {
 
   return NextResponse.json({
     authenticated: true,
-    previewMode: !isPostgresConfigured(),
+    previewMode: isPreview,
     user: ctx.safeUser,
     csrfToken: ctx.csrfToken,
     needsMfaEnroll,

@@ -112,8 +112,8 @@ export function createInitialPreviewStore(): CareMedsStoreData {
   const nowIso = new Date().toISOString();
   const todayIso = nowIso.slice(0, 10);
 
-  // Use random unguessable hashes for preview accounts (preview sign-in uses server role switcher)
-  const lockedHash = hashPassword(randomUUID() + randomUUID());
+  // Seed accounts use standard initial staff password 'CareMeds@2025'
+  const lockedHash = hashPassword('CareMeds@2025');
 
   const admin1Id = '10000000-0000-4000-8000-000000000001';
   const admin2Id = '10000000-0000-4000-8000-000000000002';

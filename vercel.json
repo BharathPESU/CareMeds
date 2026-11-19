@@ -5,11 +5,11 @@
   "crons": [
     {
       "path": "/api/cron/overdue-doses",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 1 * * *"
     },
     {
       "path": "/api/cron/notifications",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 2 * * *"
     },
     {
       "path": "/api/cron/daily",
