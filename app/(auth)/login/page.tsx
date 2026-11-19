@@ -7,20 +7,15 @@ import {
   HeartPulse,
   KeyRound,
   Lock,
-  ShieldCheck,
-  Stethoscope,
-  User,
-  UserCog,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/components/providers/CareMedsProviders';
 import { Button } from '@/components/ui/button';
 import { Card, Input, Label } from '@/components/ui/primitives';
-import type { RoleName } from '@/lib/types';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { authenticated, loading, previewMode, setupCompleted, refreshAuth } = useAuth();
+  const { authenticated, loading, setupCompleted, refreshAuth } = useAuth();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -30,7 +25,6 @@ export default function LoginPage() {
   const [recoveryCode, setRecoveryCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [switchingRole, setSwitchingRole] = useState<RoleName | null>(null);
 
   useEffect(() => {
     if (!loading) {
@@ -83,30 +77,6 @@ export default function LoginPage() {
       setError('Could not reach the sign-in service. Please try again.');
     } finally {
       setSubmitting(false);
-    }
-  }
-
-  async function handlePreviewRole(role: RoleName) {
-    setError(null);
-    setSwitchingRole(role);
-    try {
-      const res = await fetch('/api/auth/preview-role', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Could not start preview session.');
-        return;
-      }
-      await refreshAuth();
-      toast.success(`Signed in as ${data.user.fullName} (${data.user.role})`);
-      router.push('/dashboard');
-    } catch {
-      setError('Failed to start preview session.');
-    } finally {
-      setSwitchingRole(null);
     }
   }
 
@@ -245,54 +215,6 @@ export default function LoginPage() {
             </p>
           </form>
         </Card>
-
-        {previewMode && (
-          <Card className="p-5 border-dashed">
-            <div className="flex items-start gap-2.5 mb-3">
-              <ShieldCheck className="h-5 w-5 text-[var(--cm-primary)] shrink-0 mt-0.5" aria-hidden="true" />
-              <div>
-                <h3 className="text-[15px] font-semibold text-[var(--cm-text)]">
-                  Interactive Preview Environment
-                </h3>
-                <p className="text-[13px] text-[var(--cm-muted)] mt-0.5">
-                  No external Supabase database URL is connected yet. Enter a live role session directly — no passwords are stored in code.
-                </p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-full justify-center"
-                disabled={switchingRole !== null}
-                onClick={() => void handlePreviewRole('Caretaker')}
-              >
-                <User className="h-4 w-4" />
-                {switchingRole === 'Caretaker' ? 'Opening...' : 'Caretaker'}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-full justify-center"
-                disabled={switchingRole !== null}
-                onClick={() => void handlePreviewRole('Doctor')}
-              >
-                <Stethoscope className="h-4 w-4" />
-                {switchingRole === 'Doctor' ? 'Opening...' : 'Doctor'}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="w-full justify-center"
-                disabled={switchingRole !== null}
-                onClick={() => void handlePreviewRole('Admin')}
-              >
-                <UserCog className="h-4 w-4" />
-                {switchingRole === 'Admin' ? 'Opening...' : 'Admin'}
-              </Button>
-            </div>
-          </Card>
-        )}
       </div>
     </main>
   );

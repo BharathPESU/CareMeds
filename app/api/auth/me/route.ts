@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getSessionContext } from '@/lib/auth/session';
 import { loadStore } from '@/lib/store/repository';
-import { isPostgresConfigured } from '@/db/client';
 
 export async function GET() {
   const store = loadStore();
   const ctx = await getSessionContext();
 
-  const isPreview = !isPostgresConfigured() || process.env.DISABLE_PREVIEW_ROLES !== 'true';
+  const isPreview = false;
 
   if (!ctx) {
     return NextResponse.json({
