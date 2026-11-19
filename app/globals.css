@@ -1,0 +1,175 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root,
+html[data-theme="clinical-calm"] {
+  --cm-primary: #0F766E;
+  --cm-primary-hover: #0D645D;
+  --cm-primary-tint: rgba(15, 118, 110, 0.08);
+  --cm-primary-fg: #FFFFFF;
+  --cm-primary-foreground: var(--cm-primary-fg);
+  --cm-secondary: #0EA5E9;
+  --cm-bg: #F8FAFC;
+  --cm-surface: #FFFFFF;
+  --cm-surface-subtle: #F1F5F9;
+  --cm-border: #E2E8F0;
+  --cm-text: #0F172A;
+  --cm-muted: #475569;
+
+  --cm-success: #15803D;
+  --cm-success-bg: #DCFCE7;
+  --cm-warning: #B45309;
+  --cm-warning-bg: #FEF3C7;
+  --cm-danger: #B91C1C;
+  --cm-danger-bg: #FEE2E2;
+  --cm-info: #1D4ED8;
+  --cm-info-bg: #DBEAFE;
+}
+
+html[data-theme="warm-care"] {
+  --cm-primary: #C2410C;
+  --cm-primary-hover: #9A3412;
+  --cm-primary-tint: rgba(194, 65, 12, 0.08);
+  --cm-primary-fg: #FFFFFF;
+  --cm-secondary: #475569;
+  --cm-bg: #FFF7ED;
+  --cm-surface: #FFFFFF;
+  --cm-surface-subtle: #FFEDD5;
+  --cm-border: #E7D5C5;
+  --cm-text: #0F172A;
+  --cm-muted: #475569;
+}
+
+html[data-theme="modern-indigo"] {
+  --cm-primary: #4338CA;
+  --cm-primary-hover: #3730A3;
+  --cm-primary-tint: rgba(67, 56, 202, 0.08);
+  --cm-primary-fg: #FFFFFF;
+  --cm-secondary: #14B8A6;
+  --cm-bg: #EEF2FF;
+  --cm-surface: #FFFFFF;
+  --cm-surface-subtle: #E0E7FF;
+  --cm-border: #CBD5E1;
+  --cm-text: #0F172A;
+  --cm-muted: #475569;
+}
+
+html.dark,
+html.dark[data-theme="clinical-calm"] {
+  --cm-primary: #2DD4BF;
+  --cm-primary-hover: #14B8A6;
+  --cm-primary-tint: rgba(45, 212, 191, 0.12);
+  --cm-primary-fg: #0F172A;
+  --cm-primary-foreground: var(--cm-primary-fg);
+  --cm-secondary: #38BDF8;
+  --cm-bg: #0F172A;
+  --cm-surface: #1E293B;
+  --cm-surface-subtle: #334155;
+  --cm-border: #334155;
+  --cm-text: #F1F5F9;
+  --cm-muted: #94A3B8;
+
+  --cm-success: #4ADE80;
+  --cm-success-bg: rgba(21, 128, 61, 0.22);
+  --cm-warning: #FBBF24;
+  --cm-warning-bg: rgba(180, 83, 9, 0.25);
+  --cm-danger: #F87171;
+  --cm-danger-bg: rgba(185, 28, 28, 0.25);
+  --cm-info: #60A5FA;
+  --cm-info-bg: rgba(29, 78, 216, 0.25);
+}
+
+html.dark[data-theme="warm-care"] {
+  --cm-primary: #FB923C;
+  --cm-primary-hover: #F97316;
+  --cm-primary-tint: rgba(251, 146, 60, 0.12);
+  --cm-primary-fg: #0F172A;
+  --cm-secondary: #94A3B8;
+  --cm-bg: #0F172A;
+  --cm-surface: #1E293B;
+  --cm-surface-subtle: #334155;
+  --cm-border: #334155;
+  --cm-text: #F1F5F9;
+  --cm-muted: #94A3B8;
+}
+
+html.dark[data-theme="modern-indigo"] {
+  --cm-primary: #818CF8;
+  --cm-primary-hover: #6366F1;
+  --cm-primary-tint: rgba(129, 140, 248, 0.14);
+  --cm-primary-fg: #0F172A;
+  --cm-secondary: #2DD4BF;
+  --cm-bg: #0F172A;
+  --cm-surface: #1E293B;
+  --cm-surface-subtle: #334155;
+  --cm-border: #334155;
+  --cm-text: #F1F5F9;
+  --cm-muted: #94A3B8;
+}
+
+@layer base {
+  body {
+    background-color: var(--cm-bg);
+    color: var(--cm-text);
+    font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--cm-primary);
+    outline-offset: 2px;
+  }
+}
+
+.cm-card {
+  background-color: var(--cm-surface);
+  border: 1px solid var(--cm-border);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 150ms ease;
+}
+
+@media (hover: hover) {
+  .cm-card-interactive:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.07);
+  }
+}
+
+.cm-card-interactive:active {
+  transform: scale(0.98);
+}
+
+.cm-card-selected {
+  background-color: var(--cm-primary-tint);
+  border: 2px solid var(--cm-primary);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.safe-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #FFFFFF !important;
+    color: #0F172A !important;
+  }
+  .cm-card {
+    box-shadow: none !important;
+    border-color: #CBD5E1 !important;
+    break-inside: avoid;
+  }
+}

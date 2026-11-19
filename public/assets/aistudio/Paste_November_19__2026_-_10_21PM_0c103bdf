@@ -1,0 +1,672 @@
+# CareMeds: Idea
+
+## Summary
+A medication management system for an old age home. Staff track residents, prescribed medicines, dose schedules, stock, health readings, and alerts. It is a web application used on desktops and tablets by three roles: Admin, Caretaker, and Doctor.
+
+## Status
+Design is complete for the first release. Every open question has a decision (see Design decisions). The remaining items are go-live checks (see Go-live checklist), not design questions.
+
+The prototype `index.html` is a single-file demo with browser-stored sample data. It is an educational prototype, not a clinical system. The production build follows this document.
+
+## Technology stack (confirmed)
+- **Framework:** Next.js (App Router, TypeScript), deployed on Vercel.
+- **Database:** Supabase Postgres, in the Mumbai region (ap-south-1), chosen for latency and data location for an India-based facility.
+- **ORM and migrations:** Drizzle ORM with drizzle-kit. Drizzle keeps the SQL visible and works well with serverless functions.
+- **UI libraries:** Tailwind CSS v4, shadcn/ui (on Radix UI), Motion, next-themes, lucide-react, vaul, sonner, react-hook-form with zod, TanStack Table, Recharts, and next/font. The full list and purpose of each is in the UI and design section.
+- **Authentication:** custom, built into the app. Not Supabase Auth, because accounts are created by admins, there are no sign-up or reset emails, and admin MFA is set up inside the app.
+  - Passwords: argon2id.
+  - Authenticator codes: TOTP (RFC 6238, 6 digits, 30-second step, one step of clock tolerance), using `otplib`.
+  - Sessions: random opaque tokens. The browser holds the token in an httpOnly, Secure, SameSite=Strict cookie. The database stores only a SHA-256 hash of the token.
+- **File storage:** Supabase Storage, one private bucket (`resident-documents`). Files are served only through short-lived signed URLs (5 minutes), created by the server after a permission check.
+- **Exports:** CSV (native), Excel (`exceljs`), PDF (`@react-pdf/renderer`).
+- **Email:** Resend. **SMS:** Twilio.
+- **AI care assistant:** Anthropic API, called only from server code.
+- **Scheduled jobs:** Vercel Cron (see Hosting).
+- **Error monitoring:** Sentry, for errors only. Logs and error reports must never contain resident names, health data, or passwords.
+
+### Database rules for Supabase
+- **Keys:** every primary key is a UUID (`gen_random_uuid()`), except `audit_log`, which uses a bigserial so it stays in order.
+- **Types:** timestamps are `timestamptz` and are stored in UTC. They are displayed in `APP_TIMEZONE` (Asia/Kolkata by default).
+- **Enumerated values:** stored as `text` with CHECK constraints, not Postgres ENUM types, so migrations stay simple.
+- **Row Level Security (RLS):** enabled on every table, with no policies. The public anon key and the authenticated role can read nothing. Only server code, connecting with the database role, reads or writes data. The browser never receives a Supabase key, and the Supabase client is never used in the browser.
+- **Connections:** the runtime connection uses the Supabase transaction pooler (port 6543), with prepared statements disabled in the driver. Migrations use the session pooler (port 5432) on the same host, which works without IPv6.
+- **Concurrency:** dose confirmation and stock changes run in a single database transaction. Stock rows are locked with `SELECT ... FOR UPDATE`, so two caretakers cannot dose from the same stock at the same time.
+- **Backups:** Supabase daily backups on the Pro plan. Check the retention window on the plan. A restore test is part of go-live.
+
+## Hosting and configuration (confirmed)
+- **Vercel plan:** Pro. It is required for cron jobs that run every 15 minutes.
+- **Region:** `bom1` (Mumbai), set in `vercel.json`, close to the database.
+- **Environments:**
+  - Development: `.env.local` on your machine (never committed).
+  - Preview: each branch, with its own Supabase project or branch database. Preview data must not be real resident data.
+  - Production: `main`, using the real Supabase project.
+- **Environment variables:** listed in `.env.example`, which is committed. Real values live in `.env.local` (local) and in Vercel project settings (Preview and Production).
+- **NEXT_PUBLIC_ prefix:** used only for non-secret values. Currently only `NEXT_PUBLIC_APP_NAME`.
+- **Config file:** `vercel.json` sets the framework, region, cron jobs, and security headers.
+
+### Cron jobs (defined in vercel.json)
+| Path | Schedule (UTC) | Purpose |
+|---|---|---|
+| `/api/cron/overdue-doses` | every 15 minutes | Marks doses overdue, raises MISSED_DOSE and OVERDUE_DOSE alerts, escalates unacknowledged High alerts. |
+| `/api/cron/notifications` | every 5 minutes | Sends queued SMS and email notifications, with retries. |
+| `/api/cron/daily` | 00:30 UTC (06:00 IST) | Creates dose events for the next 48 hours, raises expiry, low-stock, and prescription-ending alerts, sends the daily summary, and purges expired data (see retention). |
+
+Each cron route checks the `Authorization: Bearer <CRON_SECRET>` header that Vercel sends, and rejects other requests.
+
+## Project structure (confirmed)
+```
+caremeds/
+  app/
+    (auth)/
+      login/page.tsx              single sign-in page
+      setup/page.tsx              first-run admin setup (closes after use)
+      mfa-enroll/page.tsx         doctor and admin TOTP enrollment
+      change-password/page.tsx    forced change at first login
+    (app)/
+      layout.tsx                  authenticated shell and navigation
+      dashboard/page.tsx
+      rounds/page.tsx             caretaker medication rounds
+      residents/[id]/page.tsx     profile with tabs
+      medicines/page.tsx
+      prescriptions/page.tsx
+      inventory/page.tsx
+      vitals/page.tsx
+      alerts/page.tsx
+      emergency/page.tsx
+      reports/page.tsx
+      assistant/page.tsx
+      admin/users/page.tsx        create users, credential file, reset, unlock
+      admin/settings/page.tsx     facility, thresholds, system settings
+      admin/audit/page.tsx
+    api/
+      auth/                       login, logout, MFA verify, change password
+      exports/                    csv, excel, pdf routes
+      uploads/signed-url/route.ts
+      assistant/route.ts
+      cron/                       overdue-doses, notifications, daily
+    layout.tsx
+  components/
+    ui/                           shadcn/ui components
+    residents/  rounds/  inventory/  alerts/   feature components
+    layout/                       navigation (sidebar, bottom bar), page transition, cards, skeletons
+  db/
+    schema.ts                     Drizzle schema (source of truth)
+    client.ts                     connection with pooler settings
+    migrations/                   generated SQL, committed
+    seed.ts                       roles, permissions, alert types, vital types, dose windows, settings
+  lib/
+    auth/                         password.ts, totp.ts, session.ts, lockout.ts, recovery-codes.ts
+    permissions/                  permissions.ts (can()), scope.ts (assignment checks)
+    services/                     dosing.ts, stock.ts, alerts.ts, notifications.ts, assignments.ts, credentials.ts
+    crypto.ts                     AES-256-GCM for TOTP secrets
+    audit.ts                      writes audit_log entries
+    exports/                      csv.ts, excel.ts, pdf.tsx
+    assistant/                    prompt.ts, guardrails.ts
+    validation/                   zod schemas for every input
+    time.ts                       APP_TIMEZONE helpers
+    theme.ts                      theme keys, colour tokens, and colour-mode helpers
+  tests/
+    unit/                         dosing, stock, permissions, lockout
+    integration/                  database tests against a test Supabase project
+  middleware.ts                   session check, forced password change, cookie checks
+  drizzle.config.ts
+  next.config.ts
+  vercel.json
+  .env.example
+  README.md                       to be written after this document is approved
+```
+
+Every server action and API route calls `can(user, permission, resource)` and the scope check in `lib/permissions`. The UI hides buttons for actions a user cannot perform, but the server always makes the final check.
+
+## Roles (confirmed)
+- Admin
+- Caretaker
+- Doctor
+
+Nurse and Caregiver from the original spec are merged into Caretaker. Family is not a login role. Family members receive SMS or email notifications only.
+
+## Principles
+1. **Least privilege.** Each role gets only what its work needs.
+2. **Scope by assignment.** A caretaker sees only residents they are actively assigned to. A doctor sees only residents they manage. Admins see all residents but do not change clinical records.
+3. **Minimum necessary data.** The AI assistant receives no resident data. Reports and exports include only the fields their purpose needs.
+4. **Everything traceable.** Every change to a clinical or account record is written to the audit log, and dose changes are kept as history.
+
+## Accounts and authentication (confirmed)
+
+### Admin
+- The first admin is created on `/setup`. This page is open only while a `SETUP_TOKEN` from the environment is provided, and it closes permanently once `setup_completed` is true.
+- The admin chooses a username and a password (at least 12 characters, not equal to the username).
+- The app generates the TOTP secret and shows it once, as a QR code and a text key. The admin enters the 6-digit code from the authenticator app to confirm the scan. Until that code is confirmed, the secret is not active.
+- The app then shows 10 one-time recovery codes. They are shown once and stored only as hashes.
+- The password is stored only as a hash. The TOTP secret is stored encrypted.
+- No default or example credentials exist anywhere in the application or the repository.
+- A second admin is required before go-live (see the checklist). The system refuses to deactivate or demote the last active admin.
+
+### Doctors
+- Only an admin creates a doctor account. The admin enters the full name and role, and the system generates the username and a temporary password.
+- Usernames follow `firstname.lastname` in lowercase, with three random digits added if the name is already taken.
+- Temporary passwords are 16 random characters and expire after 7 days.
+- At first login, the doctor must change the password, then enroll TOTP in the app (QR code shown to the doctor only), then save their recovery codes. Doctors must use MFA, because they change prescriptions.
+
+### Caretakers
+- Only an admin creates a caretaker account, using the same flow as doctors.
+- Caretakers sign in with username and password only. They must change the temporary password at first login.
+- A facility setting, `require_mfa_caretakers`, defaults to off. An admin can turn it on. When it is on, caretakers enroll TOTP the same way doctors do.
+
+### Credential file
+- The admin downloads a CSV file from the user's page with these columns: `full_name`, `role`, `username`, `temporary_password`, `expires_on`, `facility`.
+- The file is generated on demand and is not stored on the server. The temporary password is shown only in this file. After the download, the server keeps only its hash, so the file cannot be downloaded again. To get a new file, the admin resets the password.
+- Each download is recorded in `credential_exports`.
+- The admin hands the file over in person or sends it privately (not in a shared group chat), then deletes it. The app reminds the admin to do this after each download.
+
+### Login flow
+1. The user opens `/login`. The page shows username and password only.
+2. The server checks the username and password. A wrong username and a wrong password give the same message.
+3. If the password is correct and the account has MFA enabled, the page then asks for the 6-digit code. Users without MFA never see this step, and the page reveals nothing about accounts that are not logged in.
+4. If `must_change_password` is set, the user is sent to `/change-password` and can reach no other page until the change is done.
+5. A successful login creates a session, and the failure count resets to zero.
+
+### Lockout and sessions
+- After 5 consecutive failed password or code attempts, the account is locked. Only an admin can unlock it. Locked accounts cannot sign in even with the correct password.
+- Each IP address is limited to 20 login attempts per 15 minutes, as a separate check against guessing across many accounts.
+- Sessions end after 15 minutes of inactivity (setting `session_idle_minutes`) and after 12 hours in total (setting `session_max_hours`).
+- An admin password reset, deactivation, or lock revokes all of that user's sessions at once.
+- Forms use CSRF tokens derived from `SESSION_SECRET`.
+
+### Password rules
+- At least 12 characters. It cannot match the username or the temporary password.
+- Hashing uses argon2id. Passwords and recovery codes are never stored in plain text or logged.
+
+### Admin visibility
+- The admin can view all doctors and caretakers, their status, and their login history.
+- The admin can view which doctor manages each resident, and which caretakers are assigned to each resident, including the history of each assignment.
+
+## Permissions (confirmed)
+
+| Module | Admin | Doctor | Caretaker |
+|---|---|---|---|
+| Create doctor and caretaker accounts, reset passwords, unlock, deactivate | Full | None | None |
+| Login history | Full | None | None |
+| Facility settings, dose windows, vital thresholds, MFA setting | Full | None | None |
+| Caretaker assignments | Full, all residents | Assign and end, own residents only | View own |
+| Residents: add and edit | Full | View own residents | Add and edit assigned residents |
+| Residents: archive | Full, with a reason | None | None |
+| Medicine master list | Full, approves | Propose new medicines, view | View |
+| Prescriptions and dosage instructions | View all | Full, own residents | View assigned residents |
+| Confirm, refuse, mark missed or held | None | None | Full, assigned residents |
+| Health records and vitals | View all | Add and view, own residents | Add and view, assigned residents |
+| Doctor visit notes and lab uploads | View all | Full, own residents | View, assigned residents |
+| Shift handover notes | View all | View | Add and view, assigned residents |
+| Inventory: stock in and returns | Full | View | Record |
+| Inventory: adjustments, disposal, damage | Approve | View | Propose (needs admin approval) |
+| Purchase orders | Create and approve | View | None |
+| Alerts: acknowledge and resolve | Full | Own residents | Assigned residents |
+| Emergency button and incident log | View all | View, own residents | Full, assigned residents |
+| Reports | Full | Own residents | Own shift activity |
+| Audit log | Full | None | None |
+| Care assistant | Full | Full | Full |
+
+## Admin features (ideated, pending your review)
+
+### 1. Users and access
+- Create doctor and caretaker accounts, and download the credential file
+- Reset a password, which issues a new temporary password and ends the user's sessions
+- Deactivate accounts, and unlock accounts locked after failed sign-ins
+- View login history for every user
+- Set the inactivity timeout and the session maximum
+
+### 2. Caretaker assignments
+- View all doctors and caretakers
+- View which caretakers are assigned to each resident, and which doctor manages each resident
+- View assignment history, including when each assignment started and ended
+
+### 3. Facility setup
+- Facility profile: name, address, contact details, and registration or licence number
+- Dose time windows (for example, Morning, Afternoon, Night). These also serve as the shifts for handover notes.
+- Vital thresholds for BP, blood sugar, temperature, pulse, SpO2, and weight. The app ships with no thresholds. The facility's doctor enters them during setup, and abnormal-reading alerts stay off until they are entered.
+- Expiry warning period (default 60 days)
+- Default reorder level for new stock items
+
+### 4. Residents and medicines oversight
+- Archive a resident with a reason. This stops all active prescriptions and notifies the assigned doctor.
+- Approve or reject medicines proposed by doctors, and deactivate medicines in the master list
+- Review residents who have no active prescriptions or no assigned doctor
+
+### 5. Alert and escalation rules
+- Choose which alert types are High, Medium, or Low priority
+- Set the escalation time (default 15 minutes) before an unacknowledged High alert escalates to the admin
+- Choose which alerts send SMS or email to family contacts (default: missed doses that are High priority, abnormal vitals, and emergency incidents)
+- Choose which alerts go to the assigned doctor
+
+### 6. Inventory governance
+- Approve stock adjustments, disposals, and damage write-offs proposed by caretakers
+- Create and approve purchase orders from the reorder list
+- Review expired and disposed stock
+
+### 7. Oversight and accountability
+- Audit log of every change, filterable by user, record, and date
+- Staff activity report: doses confirmed, missed, or refused per caretaker
+- Compliance overview: missed or overdue doses by resident, dose window, and week
+- Scheduled weekly summary by email
+
+### 8. Data and system
+- Backup status view, and a documented restore procedure
+- Data retention and export settings (see Business rules)
+- Language and display settings, including dark mode
+- Global search across residents, medicines, and users
+
+Admins do not change prescriptions or dosing, and do not confirm doses. This keeps the admin role focused on configuration, account management, and oversight.
+
+## Caretaker features (ideated, pending your review)
+
+### 1. Daily medication rounds
+- Today's rounds sorted by time, filtered by resident, medicine, and status, for assigned residents only
+- Confirm, refuse, or mark missed on each dose. A reason is required for refused, missed, or held doses.
+- Identity and allergy check before each dose is confirmed (name, room, and photo where available)
+- Undo within the undo window (default 5 minutes)
+- Overdue doses highlighted automatically
+- Printable daily round sheet, as a fallback if the app or network is unavailable
+
+### 2. Resident care
+- Resident list with room lookup and search, limited to assigned residents
+- Resident profile with tabs: Overview, Medicines, Doses, Vitals, and Notes
+- Allergies shown prominently on every profile
+- Emergency contacts and assigned doctor shown on the profile
+
+### 3. Health readings
+- Record BP, blood sugar, temperature, pulse, SpO2, weight, and notes, with the time and the recorder's name
+- View each resident's readings and trends
+- Out-of-range readings highlighted, once the facility has entered thresholds
+
+### 4. Alerts
+- View alerts for assigned residents
+- Acknowledge and resolve alerts, with a note
+
+### 5. Medicine storage
+- View the storage location of each stock item (cabinet, shelf, fridge, or locked controlled-drug box)
+- Record fridge temperature readings
+- Record stock received and returns
+- Propose stock adjustments, disposals, and damage write-offs. They take effect only after an admin approves them.
+
+### 6. Emergency
+- Emergency button showing resident name, room, allergies, blood group, conditions, assigned doctor, and contacts
+- Click-to-call links for contacts and the doctor
+- Emergency incident log: time, action taken, and outcome
+
+### 7. Shift handover
+- Handover notes per resident and per dose window, visible to the next shift
+- Shift summary of doses given, refused, and missed. The app calculates the summary; it does not send it to the AI assistant.
+
+### 8. Own account and assistant
+- Change own password, and edit own name and phone number
+- View own activity history
+- Care assistant for how-to questions and general medicine information (see Care assistant)
+
+## Doctor features (ideated, pending your review)
+
+### 1. Prescription management
+- Create, edit, stop, put on hold, and complete prescriptions for their own residents
+- Prescription fields: medicine, resident, start and end date, reason or diagnosis, and special instructions
+- Allergy warning and duplicate-medicine warning when prescribing
+- Prescription history per resident
+- Attach a prescription image or PDF
+- Propose a new medicine for admin approval
+
+### 2. Dosage instructions
+- Dose amount in the medicine's stock unit, frequency, exact times, and route
+- PRN (as-needed) option with a minimum gap and a maximum per day
+- Tapering or changing schedules with an effective date
+- Dose change history
+
+### 3. Renewals
+- Renewal queue for prescriptions nearing their end date (reminder default: 7 days before)
+- Approve, change, or end renewals
+
+### 4. Resident review
+- Vitals trends and missed or refused doses for each of their own residents
+- Adherence summary by resident and date range
+- Resident medical history, diagnoses, and vaccinations
+
+### 5. Clinical notes and results
+- Add doctor visit notes
+- Upload lab results and attach them to the resident's record
+
+### 6. Clinical alerts
+- View alerts for own residents, such as abnormal vitals, prescriptions ending, and repeated missed doses
+- Acknowledge and resolve clinical alerts with a note
+
+### 7. Reports
+- Adherence, vitals, and resident summary reports for own residents
+- Export as CSV, Excel, PDF, or printable format
+
+### 8. Caretaker assignment
+- Assign active caretakers to residents they manage, and end those assignments when they no longer apply
+- Only residents for which they are the assigned doctor can be assigned
+- Cannot create, edit, or deactivate caretaker accounts. Only admins can do that.
+
+Doctors do not confirm doses on the medication round. Their role is to set the prescription and review the outcome.
+
+## Care assistant (confirmed)
+- Available to all three roles. It answers how-to questions about the app, and general medicine information for staff.
+- It never gives dosing advice and never recommends changes to a prescription.
+- It receives no resident data. The app sends only the question text and the user's role. Shift summaries and alert guidance come from the app's own logic, not from the model.
+- Doctors may ask general clinical reference questions that do not name or describe a resident.
+- Every answer is labelled as general information. Staff must follow the prescription and facility policy.
+- Conversations are kept for 30 days and then deleted.
+
+## Database schema (confirmed for Supabase Postgres)
+
+Notation: **PK** is primary key, **FK** is foreign key, **UQ** is unique, **CHECK** is a value constraint. Types are Postgres types: `uuid`, `text`, `integer`, `numeric`, `boolean`, `timestamptz`, `date`, `time`, `jsonb`, and `inet`. Every enumerated value listed below is enforced with a CHECK constraint. Every table has RLS enabled and no policies.
+
+### Access and roles
+- **roles** (role_id PK, name UQ CHECK in Admin, Caretaker, Doctor)
+- **permissions** (permission_id PK, code UQ, description). Codes include `resident.edit`, `dose.confirm`, `prescription.create`, `stock.approve_adjustment`, `user.create`, `user.reset_password`, `user.deactivate`, `user.unlock`, `caretaker.assign`, `assignment.view_all`, and `settings.edit`.
+- **role_permissions** (role_id FK, permission_id FK, PK on both). The matrix lives in data, so it can change without a code change.
+- **users** (user_id PK, full_name, username UQ, email nullable, phone nullable, role_id FK to roles, password_hash, is_active, must_change_password, temp_password_expires_at nullable, password_changed_at, failed_login_count integer default 0, is_locked, locked_at nullable, mfa_enabled, mfa_secret_encrypted nullable, mfa_enrolled_at nullable, created_by FK to users nullable, created_at, deactivated_at nullable, deactivated_by FK to users nullable, updated_at). The secret is stored only after the enrollment code is confirmed. Usernames for doctors and caretakers are generated by the system.
+- **sessions** (session_id PK, user_id FK to users, token_hash UQ, created_at, last_seen_at, expires_at, revoked_at nullable). Expired sessions are purged after 30 days.
+- **mfa_recovery_codes** (code_id PK, user_id FK to users, code_hash, used_at nullable, created_at). Each code works once.
+- **user_preferences** (user_id PK FK to users, theme_key CHECK in clinical-calm, warm-care, modern-indigo, color_mode CHECK in light, dark, system, updated_at). One row per user. Missing rows fall back to the facility defaults.
+- **credential_exports** (export_id PK, target_user_id FK to users, exported_by FK to users, exported_at). Records each download. The file is not stored.
+- **login_history** (login_id PK, user_id FK to users nullable, attempted_username, attempted_at, succeeded boolean, ip_address inet nullable). `user_id` is null when the username matches no account. Kept 365 days.
+- **system_settings** (setting_key PK, setting_value, updated_by FK to users, updated_at). Default values:
+  - `setup_completed` = false
+  - `session_idle_minutes` = 15
+  - `session_max_hours` = 12
+  - `lockout_threshold` = 5
+  - `require_mfa_caretakers` = false
+  - `expiry_warning_days` = 60
+  - `escalation_minutes` = 15
+  - `undo_window_minutes` = 5
+  - `renewal_reminder_days` = 7
+  - `overdue_grace_minutes` = 60
+  - `default_theme` = clinical-calm
+  - `default_color_mode` = system
+- **facility** (facility_id PK, name, address, phone, email, registration_no). One row, enforced by a fixed key.
+- **dose_time_windows** (window_id PK, name UQ, for example Morning, Afternoon, Night; start_time time, end_time time). Also serves as the shift definition.
+- **vital_types** (vital_type_id PK, code UQ, name, unit, min_normal numeric nullable, max_normal numeric nullable). Null thresholds mean the alert is off.
+- **audit_log** (audit_id bigserial PK, user_id FK to users nullable, action, table_name, record_id, old_values jsonb nullable, new_values jsonb nullable, created_at). Append-only: a trigger rejects every UPDATE and DELETE.
+
+### Residents
+- **rooms** (room_id PK, room_code UQ, wing_or_floor)
+- **beds** (bed_id PK, room_id FK to rooms, bed_code, UQ on room_id and bed_code)
+- **residents** (resident_id PK, full_name, photo_path nullable, date_of_birth, gender, blood_group, bed_id FK to beds nullable, UQ, admission_date, diet_notes, assigned_doctor_id FK to users nullable, which must be a Doctor, status CHECK in Active, Discharged, Archived, archived_at nullable, archive_reason nullable, allergy_status CHECK in Unknown, None known, Recorded, created_by FK to users, created_at, updated_at). Age is calculated from `date_of_birth` and is not stored.
+- **care_assignments** (assignment_id PK, caretaker_id FK to users, which must be a Caretaker, resident_id FK to residents, assigned_by FK to users, assigned_at, ended_at nullable, ended_by FK to users nullable). Ended assignments are kept as history. A partial unique index allows one active assignment per caretaker and resident (UQ on caretaker_id and resident_id WHERE ended_at IS NULL).
+- **resident_contacts** (contact_id PK, resident_id FK to residents, full_name, relationship, phone, email nullable, is_primary boolean, receives_notifications boolean). A partial unique index allows at most one primary contact per resident (WHERE is_primary = true).
+- **resident_diagnoses** (diagnosis_id PK, resident_id FK to residents, description, diagnosed_on date, is_active, recorded_by FK to users)
+- **resident_history** (history_id PK, resident_id FK to residents, type CHECK in Past illness, Surgery, Vaccination, description, event_date date, recorded_by FK to users)
+- **allergies** (allergy_id PK, resident_id FK to residents, medicine_id FK to medicine_catalogue nullable, substance_text nullable, reaction, severity CHECK in Mild, Moderate, Severe, recorded_by FK to users, recorded_at). Exactly one of `medicine_id` or `substance_text` is set. Two partial unique indexes prevent duplicates: UQ on (resident_id, medicine_id) WHERE medicine_id IS NOT NULL, and UQ on (resident_id, lower(substance_text)) WHERE substance_text IS NOT NULL.
+- **resident_notes** (note_id PK, resident_id FK to residents, author_id FK to users, note_type CHECK in Doctor visit, General, body, created_at)
+- **shift_handover_notes** (note_id PK, resident_id FK to residents, window_id FK to dose_time_windows, shift_date date, author_id FK to users, body, created_at)
+- **resident_documents** (document_id PK, resident_id FK to residents, document_type CHECK in Lab result, Visit letter, Other, storage_path, file_name, mime_type CHECK in application/pdf, image/jpeg, image/png, size_bytes CHECK up to 10 MB, uploaded_by FK to users, uploaded_at)
+
+### Medicines and storage
+- **medicine_catalogue** (medicine_id PK, name, generic_name, form CHECK in Tablet, Syrup, Injection, Capsule, Cream, Inhaler, strength, stock_unit CHECK in tablet, capsule, ml, vial, sachet, tube, inhaler, manufacturer, category, food_instruction, side_effects, storage_condition, is_controlled boolean, status CHECK in Active, Discontinued, approval_status CHECK in Pending, Approved, Rejected, proposed_by FK to users, approved_by FK to users nullable, created_at). Doctors propose; only Approved medicines can be prescribed.
+- **storage_locations** (location_id PK, name, location_type CHECK in Cabinet, Shelf, Fridge, Locked controlled-drug box, is_locked boolean)
+- **fridge_temperature_logs** (log_id PK, location_id FK to storage_locations, which must be a Fridge, temperature_c numeric(4,1), recorded_at, recorded_by FK to users)
+
+### Prescriptions and dosage
+- **prescriptions** (prescription_id PK, resident_id FK to residents, medicine_id FK to medicine_catalogue, prescribed_by FK to users, which must be a Doctor, reason_diagnosis, special_instructions, allergy_override_reason nullable, start_date date, end_date date nullable, status CHECK in Active, Completed, Stopped, On hold, stop_reason nullable, stopped_at nullable, renewal_reminder_days, previous_prescription_id FK to prescriptions nullable). `end_date` must be on or after `start_date`.
+- **prescription_attachments** (attachment_id PK, prescription_id FK to prescriptions, storage_path, file_type CHECK in Image, PDF, uploaded_by FK to users, uploaded_at)
+- **dosage_schedules** (schedule_id PK, prescription_id FK to prescriptions, dose_amount numeric, dose_unit, which must equal the medicine's stock_unit (enforced by trigger and in the app), route CHECK in Oral, Injection, Topical, Inhaled, frequency CHECK in Once daily, Twice daily, Weekly, Every X hours, PRN, interval_hours integer nullable, is_prn boolean, prn_min_gap_minutes integer nullable, prn_max_per_day integer nullable, effective_from date, effective_to date nullable, changed_by FK to users, change_reason). Each row is one version of the dose. Versions for the same prescription cannot overlap in time (enforced with an exclusion constraint on the date range).
+- **schedule_times** (schedule_time_id PK, schedule_id FK to dosage_schedules, time_of_day time, window_id FK to dose_time_windows, UQ on schedule_id and time_of_day)
+
+### Dose administration
+- **dose_events** (dose_event_id PK, schedule_id FK to dosage_schedules, scheduled_at timestamptz, status CHECK in Pending, Taken, Refused, Missed, Held, administered_at nullable, confirmed_by FK to users nullable, reason nullable, is_manual boolean, created_by FK to users, undo_until nullable, UQ on schedule_id and scheduled_at). Resident and medicine are reached through the schedule and prescription, not copied here. Taken requires `administered_at` and `confirmed_by`. Refused, Missed, and Held require `reason`.
+- **dose_event_status_log** (log_id PK, dose_event_id FK to dose_events, from_status, to_status, changed_by FK to users, changed_at, reason nullable). Every change is recorded, including undos.
+
+### Inventory
+- **suppliers** (supplier_id PK, name, contact_person, phone, email)
+- **inventory_items** (stock_id PK, medicine_id FK to medicine_catalogue, batch_number, supplier_id FK to suppliers, location_id FK to storage_locations, purchase_date, unit_cost numeric, expiry_date date, reorder_level integer, UQ on medicine_id and batch_number). The quantity is not stored here.
+- **stock_movements** (movement_id PK, stock_id FK to inventory_items, movement_type CHECK in Stock in, Dose taken, Adjustment, Return, Disposal, Damage, quantity_change integer, a signed non-zero value, reason nullable, dose_event_id FK to dose_events nullable, approval_status CHECK in Not required, Pending, Approved, Rejected, performed_by FK to users, approved_by FK to users nullable, created_at). Partial unique index: UQ on dose_event_id WHERE movement_type = 'Dose taken'. A CHECK constraint requires `approved_by` to differ from `performed_by`.
+- **stock_quantity** (view): the sum of `quantity_change` per `stock_id`, counting only movements whose `approval_status` is Not required or Approved.
+- **purchase_orders** (po_id PK, supplier_id FK to suppliers, status CHECK in Draft, Awaiting approval, Approved, Ordered, Received, Cancelled, created_by FK to users, approved_by FK to users nullable, created_at, approved_at nullable)
+- **purchase_order_lines** (line_id PK, po_id FK to purchase_orders, medicine_id FK to medicine_catalogue, quantity integer, unit_cost numeric, UQ on po_id and medicine_id)
+
+### Health readings
+- **vital_readings** (reading_id PK, resident_id FK to residents, recorded_at, recorded_by FK to users, bp_systolic, bp_diastolic, blood_sugar numeric, blood_sugar_unit CHECK in mg/dL, mmol/L, temperature_c numeric(4,1), pulse_bpm integer, spo2_percent integer, weight_kg numeric, notes). Whether a reading is out of range is calculated against `vital_types` and not stored.
+
+### Alerts and notifications
+- **alert_types** (alert_type_id PK, code UQ CHECK in LOW_STOCK, EXPIRY, MISSED_DOSE, OVERDUE_DOSE, ABNORMAL_VITAL, PRESCRIPTION_ENDING, default_priority CHECK in High, Medium, Low)
+- **alerts** (alert_id PK, alert_type_id FK to alert_types, priority CHECK in High, Medium, Low, status CHECK in Open, Acknowledged, Resolved, Escalated, resident_id FK nullable, stock_id FK to inventory_items nullable, dose_event_id FK nullable, reading_id FK to vital_readings nullable, prescription_id FK nullable, message, created_at, due_by, escalated_to FK to users nullable). A CHECK constraint ties each alert type to the source columns it needs. A partial unique index allows only one active alert per source and type.
+- **alert_actions** (action_id PK, alert_id FK to alerts, user_id FK to users, action CHECK in Acknowledged, Resolved, Escalated, Note, note, created_at). Every action is kept. Resolving requires a note.
+- **notifications** (notification_id PK, resident_contact_id FK to resident_contacts nullable, user_id FK to users nullable, alert_id FK to alerts nullable, incident_id FK to emergency_incidents nullable, channel CHECK in SMS, Email, status CHECK in Queued, Sent, Failed, attempts integer default 0, last_error nullable, sent_at nullable). Exactly one recipient is set (CHECK). Failed notifications are retried three times, then marked Failed and shown to admins.
+
+### Emergency
+- **emergency_incidents** (incident_id PK, resident_id FK to residents, reported_by FK to users, occurred_at, description, status CHECK in Open, Closed)
+- **incident_log_entries** (entry_id PK, incident_id FK to emergency_incidents, logged_by FK to users, action_time, action_taken, outcome, logged_at)
+
+### Care assistant
+- **assistant_conversations** (conversation_id PK, user_id FK to users, started_at, title)
+- **assistant_messages** (message_id PK, conversation_id FK to assistant_conversations, sender CHECK in User, Assistant, content, created_at). Kept 30 days, then deleted.
+
+## Key relationships
+- roles 1 to many users. Roles and permissions are many to many through role_permissions.
+- users 1 to many sessions, mfa_recovery_codes, credential_exports (as target), and login_history records.
+- Doctor users 1 to many residents (as assigned doctor) and 1 to many prescriptions.
+- Caretaker users and residents are linked many to many through care_assignments, which keeps the history of each link.
+- residents 1 to many prescriptions, contacts, diagnoses, history, allergies, vitals, notes, handover notes, documents, incidents, and care assignments.
+- prescriptions 1 to many dosage_schedules. Each schedule has many schedule_times and dose_events.
+- medicine_catalogue 1 to many prescriptions, inventory_items, allergies, and purchase_order_lines.
+- inventory_items 1 to many stock_movements. A "Dose taken" movement links to one dose event.
+- suppliers 1 to many inventory_items and purchase_orders. purchase_orders 1 to many purchase_order_lines.
+- dose_time_windows 1 to many schedule_times and shift_handover_notes.
+- alerts 1 to many alert_actions. Each alert points to its source record through nullable foreign keys.
+
+## Business rules the database and application must enforce
+1. A dose event is created only from an Active prescription, and only within the schedule's effective dates. A nightly job creates dose events for the next 48 hours. The unique key on schedule and time prevents duplicates.
+2. Only a Caretaker with an active assignment to the resident can record a dose as Taken, Refused, Missed, or Held. Taken requires `administered_at` and `confirmed_by`. Refused, Missed, and Held require a reason.
+3. A dose confirmed within `undo_until` can be undone by the same user. Every change, including undo, is written to `dose_event_status_log`.
+4. A dose's amount and unit must match the medicine's stock unit. The app blocks a prescription that does not match. Correcting it means fixing the medicine record first. No conversion rules are stored.
+5. Marking a dose Taken creates one "Dose taken" stock movement in the same transaction. The stock batch is chosen first-expiry, first-out (FEFO), using only batches that are not expired on the dose date.
+6. Quantity on hand is the sum of `stock_movements` that are Not required or Approved. Pending changes do not count.
+7. Quantity cannot go negative. If a dose would make it negative, the dose stays Pending, a LOW_STOCK alert is raised, and the caretaker is told to contact the admin.
+8. Expired stock is never issued. Expiry is checked against the dose date, not today's date.
+9. Allergy check on prescribing: if the medicine matches a recorded allergy, the doctor sees a warning. For a Mild or Moderate allergy, the doctor may prescribe after entering a reason, which is stored in `allergy_override_reason`. For a Severe allergy, prescribing is blocked until a doctor removes or downgrades the allergy with a recorded reason.
+10. Only doctors create or change prescriptions and dosage schedules. Each schedule change adds a row, and versions for one prescription cannot overlap in time.
+11. Only admins create, reset, unlock, and deactivate user accounts. Doctors can assign and end caretaker assignments, but only for their own residents. Caretakers manage no accounts.
+12. The first admin is created only through `/setup`, with the `SETUP_TOKEN`. When setup completes, `setup_completed` is set and `/setup` stops responding.
+13. Passwords, temporary passwords, and recovery codes are stored only as hashes. TOTP secrets are encrypted with AES-256-GCM using `MFA_ENCRYPTION_KEY`.
+14. A temporary password expires after 7 days. Until the user changes it, the only pages they can reach are `/change-password` and logout.
+15. An admin password reset issues a new temporary password, sets `must_change_password`, clears any lock, and ends all of the user's sessions.
+16. Each recovery code works once. A used code keeps its `used_at` value and is never reused.
+17. After 5 consecutive failed attempts, the account is locked (`is_locked`). Only an admin can unlock it. A successful login resets the failure count. A locked account cannot sign in, even with the correct password.
+18. Deactivating a user sets `is_active` to false and ends their sessions. The last active admin cannot be deactivated or demoted.
+19. A care assignment ends by setting `ended_at` and `ended_by`. It is never deleted. The same caretaker cannot hold two active assignments to the same resident.
+20. Archiving a resident requires a reason. It sets all Active prescriptions to Stopped, cancels future Pending dose events, and notifies the assigned doctor. Archived residents receive no new dose events.
+21. Clinical records are never hard-deleted. Use status changes, archiving, or voiding with a reason.
+22. A discontinued medicine cannot be used on new prescriptions. A proposed medicine cannot be prescribed until it is Approved.
+23. A user cannot approve their own stock adjustment, disposal, purchase order, or medicine proposal.
+24. Every insert, update, and delete on residents, prescriptions, dosage_schedules, dose_events, stock_movements, users, care_assignments, medicine_catalogue, allergies, and system_settings is written to `audit_log`. The table rejects UPDATE and DELETE through a trigger.
+25. Sessions are stored only as hashes. A session ends after 15 minutes idle or 12 hours total, whichever comes first.
+26. Alerts: an unacknowledged High alert escalates to the admin after `escalation_minutes`. Each escalation is recorded in `alert_actions`.
+27. Family notifications go only to contacts with `receives_notifications` set. Each notification has exactly one recipient.
+28. Retention: login history is kept 365 days. Assistant messages are kept 30 days. Expired sessions are purged after 30 days. Clinical records and the audit log are kept for 7 years after a resident is discharged or archived. This is the default, and the go-live checklist confirms it.
+
+## Design decisions (confirmed)
+- Only doctors change prescriptions and dosing. Admins and caretakers do not.
+- Caretakers administer doses for their assigned residents. Admins do not confirm doses. Doctors do not confirm doses on the round.
+- Caretakers see only their assigned residents. Doctors see only the residents they manage. Admins see all residents.
+- Doctors can assign only residents they manage, and only to active caretakers.
+- Only admins create doctor and caretaker accounts, reset passwords, unlock accounts, and deactivate accounts.
+- No self-service password reset. Admins issue temporary passwords, delivered by a downloaded CSV file.
+- Admins use TOTP and recovery codes. Doctors use TOTP, self-enrolled at first login. Caretakers use username and password, with TOTP available as a facility setting.
+- The login page shows the code step only after a correct password for an account with MFA, so the page never reveals which accounts use MFA.
+- The first admin is set up on first run, with a `SETUP_TOKEN` gate that closes after use.
+- Two admins are required before go-live, so the system is never without an admin who can reset a password.
+- Supabase Postgres is the database. Row Level Security is on for every table, and all data access goes through the server.
+- Encryption at rest comes from Supabase's disk encryption. The app also encrypts the TOTP secrets. SQLCipher is not used, because it does not apply to Postgres.
+- Caretakers record stock received, returns, and fridge temperatures. Adjustments, disposals, and damage write-offs are proposed by caretakers and approved by admins.
+- Quantity on hand is always calculated from movements, never typed in directly. This keeps stock figures traceable.
+- A dose's unit must equal the medicine's stock unit. Mismatched medicine records are corrected, not converted.
+- Allergies: Mild and Moderate allergies can be overridden by a doctor with a reason. Severe allergies block prescribing until the doctor reviews and changes the allergy record.
+- Medicines are proposed by doctors and approved by admins. Only approved medicines can be prescribed.
+- The AI assistant never receives resident data and never gives dosing advice.
+- Clinical records are archived or status-changed, never deleted.
+- Exports: CSV for data, Excel for analysis, PDF for printed records. The print administration record is a PDF.
+- Overdue dose alerts are checked every 15 minutes. This requires the Vercel Pro plan.
+- Family notifications: SMS and email, for High-priority missed doses, abnormal vitals, and emergency incidents, to contacts who have opted in.
+- Vital thresholds are entered by the facility's doctor. The app ships with none, so no clinical ranges are assumed.
+- Offline use is not part of version 1. The printable round sheet is the fallback when the network fails.
+- One design system across phone, tablet, and laptop. Default theme is Clinical Calm. Status is always shown with colour, an icon, and a label.
+
+## Go-live checklist (checks before real data, not design questions)
+- Two admin accounts created, with recovery codes stored in two safe places.
+- A licensed pharmacist or the facility manager signs off on the stock units, controlled-drug handling, and who may administer each medicine. Local regulations apply.
+- Legal review of the retention periods and of the consent and privacy notice for residents and families. If the facility is in India, check the obligations under the Digital Personal Data Protection Act, 2023.
+- If SMS is used in India, the sender ID and message templates must be registered with the telecom DLT platform before messages are sent.
+- Supabase backup restore has been tested on a copy of the database.
+- Sentry is configured, and logs have been checked to confirm they contain no health data or passwords.
+- The app has been tested with the real list of residents and medicines, in a Preview environment, not Production.
+- Staff are trained on the caretaker flow, the credential file, and the printed fallback.
+- Shared devices have an auto-lock policy and the session timeout is set.
+- A domain name is connected to the Vercel project, with HTTPS enforced.
+- Security review of the login, session, and permission code, with a test of each lockout and scope rule.
+- UI tested on a phone, a tablet, and a laptop at 375, 768, 1024, and 1440 px, in each theme, in light and dark mode, with reduced motion turned on, and with a screen reader spot check.
+
+## UI and design (confirmed)
+
+### Principles
+1. **One design on every device.** Phone, tablet, and laptop use the same components, colours, shapes, spacing, and motion. Only the navigation and layout change with screen size.
+2. **Calm and readable.** Staff work under time pressure, sometimes with tired eyes. Text is large, contrast is high, and decoration is kept to a minimum.
+3. **Immediate feedback.** Every tap or click shows a visible response within 100 ms.
+4. **Motion has a purpose.** Animation explains a change, and it is reduced for users who set reduced motion.
+5. **Status never depends on colour alone.** Every status uses a colour, an icon, and a text label together.
+
+### UI libraries (Next.js App Router, TypeScript)
+| Library | Purpose in CareMeds |
+|---|---|
+| Tailwind CSS v4 | Styling, with the theme colours set as design tokens |
+| shadcn/ui (built on Radix UI) | Accessible base components (buttons, dialogs, menus, tooltips, forms). The code is copied into `components/ui`, so the team owns and can change it. |
+| Motion (`motion/react`) | Page transitions, hover and press effects, list and sheet animations |
+| next-themes | Light, dark, and system colour modes, with no flash on first load |
+| lucide-react | Icons used with every status and action |
+| vaul | Bottom sheets on phones (shadcn Drawer), including the "More" menu |
+| sonner | Short messages, such as "Dose recorded. Undo" |
+| react-hook-form and zod | Forms. The same zod schemas validate input on the server. |
+| TanStack Table | Sortable and filterable tables. On phones they become cards. |
+| Recharts | Vitals trend charts and adherence charts |
+| class-variance-authority, clsx, tailwind-merge | Component variants (installed with shadcn/ui) |
+| next/font (Inter) | Typeface. Next.js downloads it at build time and serves it from the app, so no external font request is needed. |
+
+### Page transitions
+- Each route group has a `template.tsx` that wraps the page in a Motion fade and an 8 px upward slide, 200 ms, ease-out. A template remounts on every navigation, so the animation runs on every page change.
+- Pages that load data show skeleton placeholders from `loading.tsx`, so content does not jump when it arrives.
+- Navigation links are Next.js `Link` components, which prefetch the next page. Taps and clicks on navigation feel instant.
+- Dialogs and sheets animate in and out with `AnimatePresence`.
+- Reduced motion: transitions become a plain 150 ms fade. This uses Motion's `useReducedMotion`.
+- Dose confirmation uses a short colour change only, with no movement, so the medication round stays quick.
+- Only `transform` and `opacity` are animated, to keep motion smooth on older tablets.
+
+### Layout across devices
+| Screen width | Navigation | Layout |
+|---|---|---|
+| Below 768 px (phones) | Bottom bar with Dashboard, Rounds, Residents, Alerts, and More. More opens a bottom sheet with the other pages. | One column. Tables become cards. |
+| 768 to 1023 px (tablets) | Icon rail (72 px). Tapping it expands the labels. | Two columns where the content allows it |
+| 1024 px and wider (laptops and desktops) | Full sidebar (256 px), which collapses to the icon rail | Multiple columns and full tables |
+
+- Breakpoints use the Tailwind defaults (`md` at 768 px, `lg` at 1024 px).
+- Every touch target is at least 44 × 44 px at every size, so tablets and touchscreen laptops work the same way.
+- The bottom bar respects the phone's safe-area inset at the bottom of the screen.
+- Layouts are checked at 375, 768, 1024, and 1440 px wide before each release.
+
+### Cards and shapes
+- **Radius scale:** 8 px for small elements, 12 px for buttons and inputs, 16 px for cards, 24 px for sheets and dialogs. Badges and filter chips are fully rounded.
+- **Cards:** the surface colour of the current theme, a 1 px neutral border, a soft shadow, a 16 px radius, and 20 px padding (16 px on phones).
+- **Hover:** on devices with a precise pointer (CSS `hover: hover`), a card rises 2 px and its shadow deepens over 200 ms. Touch devices get no hover effect, so nothing stays highlighted after a tap.
+- **Press:** a card or button shrinks to 98% while pressed and returns on release.
+- **Selected:** a clicked card or row keeps a highlight: a primary tint at 8% opacity, a 2 px primary border, and a primary label. It stays until another item is selected or the user clears it. This applies to resident selection, the alert being viewed, and the active navigation item.
+- **Active navigation:** a primary tint and primary text, with an indicator bar on the left edge (laptop) or the top edge (phone bar).
+- **Focus:** a visible 2 px primary ring with a 2 px offset for keyboard users. Focus rings are never removed.
+- **Buttons:** the primary button darkens slightly on hover, shrinks to 98% on press, and uses the same radius as inputs.
+
+### Themes
+Each theme defines three colours: a primary, a secondary, and a background. Every theme shares the same layout, status colours, typography, and shapes, so switching themes changes only the colours.
+
+**Shared status colours (fixed across all themes, so meaning never changes):**
+- Success (Taken, healthy readings): `#15803D`
+- Warning (Held, low stock, expiry soon): `#B45309`
+- Danger (Missed, overdue, severe allergy, critical alert): `#B91C1C`
+- Information (notices, pending approvals): `#1D4ED8`
+
+**Shared neutrals in light mode:** white cards (`#FFFFFF`), primary text (`#0F172A`), and muted text (`#475569`).
+
+**Theme 1: Clinical Calm (recommended default)**
+- Primary: `#0F766E` (deep teal)
+- Secondary: `#0EA5E9` (sky blue)
+- Background: `#F8FAFC` (cool off-white)
+- Why: teal and blue read as clinical and calm, which suits a care setting. The cool background is easy to look at during long shifts.
+
+**Theme 2: Warm Care**
+- Primary: `#C2410C` (burnt orange)
+- Secondary: `#475569` (slate)
+- Background: `#FFF7ED` (warm cream)
+- Why: warmer and more homely, which suits resident areas and bedside tablets. Orange sits close to the warning amber, so warnings always use the warning icon and label, never colour alone.
+
+**Theme 3: Modern Indigo**
+- Primary: `#4338CA` (indigo)
+- Secondary: `#14B8A6` (teal)
+- Background: `#EEF2FF` (pale indigo)
+- Why: a modern look for admin dashboards with many charts. The secondary teal separates chart series clearly.
+
+**Rules for all themes**
+- Text uses only the primary text and muted text colours. Secondary colours are for accents, chart series, and icons, never for body text, because the secondary colours do not meet the 4.5:1 text contrast ratio on white.
+- The primary colour is used for text and buttons on the background and white surfaces. Each one must reach at least 4.5:1 contrast on the background it sits on. Check each pair with a contrast checker during the build.
+
+**Dark mode (same for all themes):** background `#0F172A`, card surface `#1E293B`, primary text `#F1F5F9`. The primary colour is lightened for contrast:
+- Clinical Calm: `#2DD4BF`
+- Warm Care: `#FB923C`
+- Modern Indigo: `#818CF8`
+
+**Theme selection**
+- The admin sets the facility default (`default_theme` and `default_color_mode`). The default is Clinical Calm, with colour mode set to system.
+- Each user can choose their own theme and colour mode in their profile. The choice is stored in `user_preferences`.
+- The theme is applied with a `data-theme` attribute on the `html` element. Colours are CSS variables defined once in `globals.css`.
+
+### Typography
+- Inter for all text.
+- Body text 16 px with a line height of 1.5. Headings 20, 24, and 30 px.
+- The smallest text is 14 px, and only for secondary labels.
+
+### Accessibility and quality bar
+- Target: WCAG 2.2 level AA.
+- Text contrast of at least 4.5:1 and icon contrast of at least 3:1.
+- Keyboard navigation for every action, and screen-reader labels on every icon-only button.
+- Reduced motion is respected everywhere.
+- Dark mode is tested with each theme, not just the default.
+
+## Open questions
+None. Every question raised so far has a decision above. New questions will be added here as they come up.
+
+## Change log
+- Roles reduced to Admin, Caretaker, and Doctor.
+- Permission matrix drafted, then updated with the confirmed decisions.
+- Admin, caretaker, and doctor feature sections added.
+- Database schema added for all roles, then rewritten for Supabase Postgres.
+- Technology changed from SQLite to Supabase Postgres, with Next.js on Vercel.
+- Account and authentication rules added: first-run admin setup with TOTP and recovery codes; admin-created doctor and caretaker accounts with a credential file; doctors use TOTP; no self-service password reset.
+- Caretaker assignment rules added. Doctors can assign only their own residents, and cannot manage caretaker accounts.
+- Hosting, environment, and project structure added. `vercel.json` and `.env.example` added to the repository.
+- Cron jobs, security headers, and the login flow (code step shown only after a correct password) added.
+- All earlier open questions resolved. The Open questions section is now empty.
+- UI and design section added: UI libraries, page transitions, layout across phone, tablet, and laptop, cards and hover, press and selected states, three themes, dark mode, and accessibility targets.
+- Theme choice added to the schema (`user_preferences`), with facility defaults in `system_settings`.
+- Go-live checklist extended with UI testing at four widths, in every theme, and in dark mode.
+
+### Corrections made in this version
+- The schema was written in SQLite types. It is now in Postgres types, with UUID keys, `timestamptz`, and CHECK constraints in place of SQLite TEXT conventions.
+- Business rule on lockout said a locked account returns at `locked_until`, which contradicted admin-only unlock. The users table now uses `is_locked` and `locked_at`.
+- The `shifts` table and the `shift_id` column on care assignments were optional and unlinked, so handover had no table. Shifts are now the dose time windows, and handover notes have their own table.
+- The "existing sessions end" rule had no table to enforce it. A `sessions` table was added.
+- Temporary passwords had no expiry. They now expire after 7 days.
+- Medicine approval had no status column. `approval_status` was added.
+- Lab uploads had no table. `resident_documents` was added.
+- The dose unit list (mg, ml, tablet, IU) conflicted with the stock-unit rule. A dose unit must now equal the medicine's stock unit.
+- Doctors were shown as viewers of all residents. Doctors now see only their own residents.
+- The earlier login design showed the code field to everyone. The code step now appears only after a correct password for an MFA account.
+- Caretakers' stock adjustment rights were marked "to be decided". They can now propose adjustments, which admins approve.
+- Audit log was described as append-only without enforcement. A trigger now enforces it.
+- Shift summaries were implied to go to the AI assistant. The app now calculates them.
+- The credential file was described as shown once without saying it cannot be downloaded again. This is now stated.
+- Allergy severity was recorded, but no rule used it. Severe allergies now block prescribing.
+- Login history recorded IP addresses with no retention limit. A 365-day limit was added.
+- Rules that depended on undecided settings were given defaults, so none remain open.

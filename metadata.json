@@ -1,0 +1,6 @@
+{
+  "name": "CareMeds",
+  "description": "Medication, resident care, inventory, and clinical oversight system for residential care homes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
