@@ -52,6 +52,10 @@ export async function GET(req: NextRequest) {
     .filter((u) => u.role === 'Doctor' && u.isActive)
     .map((u) => ({ userId: u.userId, fullName: u.fullName }));
 
+  const caretakers = store.users
+    .filter((u) => u.role === 'Caretaker' && u.isActive)
+    .map((u) => ({ userId: u.userId, fullName: u.fullName }));
+
   const occupiedBedIds = new Set(
     store.residents.filter((r) => r.status === 'Active' && r.bedId).map((r) => r.bedId!)
   );
@@ -65,7 +69,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-  return NextResponse.json({ residents: items, doctors, availableBeds });
+  return NextResponse.json({ residents: items, doctors, caretakers, availableBeds });
 }
 
 export async function POST(req: NextRequest) {
@@ -92,6 +96,10 @@ export async function POST(req: NextRequest) {
 
   const nowIso = new Date().toISOString();
   const residentId = randomUUID();
+  const assignedDoctorId =
+    parsed.data.assignedDoctorId ||
+    (auth.ctx.user.role === 'Doctor' ? auth.ctx.user.userId : null);
+
   const resident = {
     residentId,
     fullName: parsed.data.fullName,
@@ -102,7 +110,7 @@ export async function POST(req: NextRequest) {
     bedId: parsed.data.bedId || null,
     admissionDate: parsed.data.admissionDate,
     dietNotes: parsed.data.dietNotes || null,
-    assignedDoctorId: parsed.data.assignedDoctorId || null,
+    assignedDoctorId,
     status: 'Active' as const,
     archivedAt: null,
     archiveReason: null,
@@ -114,8 +122,21 @@ export async function POST(req: NextRequest) {
 
   store.residents.push(resident);
 
+  // If a caretaker was chosen at creation, assign them immediately
+  if (parsed.data.assignedCaretakerId) {
+    store.careAssignments.push({
+      assignmentId: randomUUID(),
+      caretakerId: parsed.data.assignedCaretakerId,
+      residentId,
+      assignedBy: auth.ctx.user.userId,
+      assignedAt: nowIso,
+      endedAt: null,
+      endedBy: null,
+    });
+  }
+
   // If a Caretaker adds a resident, automatically assign them so the resident stays in their scope
-  if (auth.ctx.user.role === 'Caretaker') {
+  if (auth.ctx.user.role === 'Caretaker' && parsed.data.assignedCaretakerId !== auth.ctx.user.userId) {
     store.careAssignments.push({
       assignmentId: randomUUID(),
       caretakerId: auth.ctx.user.userId,

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const loginSchema = z.object({
+  role: z.enum(['Admin', 'Doctor', 'Caretaker']).optional(),
   username: z.string().trim().min(1, 'Username is required'),
   password: z.string().min(1, 'Password is required'),
   totpCode: z.string().trim().optional(),
@@ -28,7 +29,16 @@ export const changePasswordSchema = z.object({
 
 export const createUserSchema = z.object({
   fullName: z.string().trim().min(2, 'Full name is required').max(120),
-  role: z.enum(['Admin', 'Doctor', 'Caretaker']),
+  role: z.enum(['Doctor', 'Caretaker']),
+  username: z
+    .string()
+    .trim()
+    .min(3, 'Username must be at least 3 characters')
+    .max(60)
+    .regex(/^[a-z0-9._-]+$/i, 'Use letters, numbers, dots, underscores, or hyphens')
+    .optional()
+    .or(z.literal('')),
+  password: z.string().min(6, 'Password must be at least 6 characters').optional().or(z.literal('')),
   email: z.string().trim().email('Enter a valid email').optional().or(z.literal('')),
   phone: z.string().trim().max(30).optional().or(z.literal('')),
 });
@@ -42,6 +52,7 @@ export const createResidentSchema = z.object({
   admissionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD date format'),
   dietNotes: z.string().max(500).optional().nullable(),
   assignedDoctorId: z.string().nullable().optional(),
+  assignedCaretakerId: z.string().nullable().optional(),
   allergyStatus: z.enum(['Unknown', 'None known', 'Recorded']).default('Unknown'),
 });
 

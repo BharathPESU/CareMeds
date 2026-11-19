@@ -113,6 +113,7 @@ export const ROLE_PERMISSION_CODES: Record<RoleName, PermissionCode[]> = {
   Doctor: [
     'caretaker.assign',
     'resident.view',
+    'resident.edit',
     'medicine.view',
     'medicine.propose',
     'prescription.view',

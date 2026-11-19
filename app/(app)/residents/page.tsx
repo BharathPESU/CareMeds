@@ -33,6 +33,7 @@ export default function ResidentsPage() {
   const { user, csrfToken } = useAuth();
   const [residents, setResidents] = useState<ResidentListItem[]>([]);
   const [doctors, setDoctors] = useState<{ userId: string; fullName: string }[]>([]);
+  const [caretakers, setCaretakers] = useState<{ userId: string; fullName: string }[]>([]);
   const [availableBeds, setAvailableBeds] = useState<{ bedId: string; label: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -47,11 +48,12 @@ export default function ResidentsPage() {
     bedId: '',
     admissionDate: new Date().toISOString().slice(0, 10),
     assignedDoctorId: '',
+    assignedCaretakerId: '',
     allergyStatus: 'Unknown',
     dietNotes: '',
   });
 
-  const canCreate = user?.role === 'Admin' || user?.role === 'Caretaker';
+  const canCreate = user?.role === 'Admin' || user?.role === 'Doctor' || user?.role === 'Caretaker';
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +62,7 @@ export default function ResidentsPage() {
         const data = await res.json();
         setResidents(data.residents || []);
         setDoctors(data.doctors || []);
+        setCaretakers(data.caretakers || []);
         setAvailableBeds(data.availableBeds || []);
       }
     } finally {
@@ -92,7 +95,8 @@ export default function ResidentsPage() {
         body: JSON.stringify({
           ...form,
           bedId: form.bedId || null,
-          assignedDoctorId: form.assignedDoctorId || null,
+          assignedDoctorId: form.assignedDoctorId || (user?.role === 'Doctor' ? user.userId : null),
+          assignedCaretakerId: form.assignedCaretakerId || null,
           dietNotes: form.dietNotes || null,
         }),
       });
@@ -109,7 +113,8 @@ export default function ResidentsPage() {
         bloodGroup: 'O+',
         bedId: '',
         admissionDate: new Date().toISOString().slice(0, 10),
-        assignedDoctorId: '',
+        assignedDoctorId: user?.role === 'Doctor' ? user.userId : '',
+        assignedCaretakerId: '',
         allergyStatus: 'Unknown',
         dietNotes: '',
       });
@@ -291,18 +296,18 @@ export default function ResidentsPage() {
                 </Select>
               </div>
             </div>
+            <div>
+              <Label htmlFor="bedId">Room / Bed</Label>
+              <Select id="bedId" value={form.bedId} onChange={(e) => setForm({ ...form, bedId: e.target.value })}>
+                <option value="">Assign later</option>
+                {availableBeds.map((b) => (
+                  <option key={b.bedId} value={b.bedId}>
+                    {b.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="bedId">Room / Bed</Label>
-                <Select id="bedId" value={form.bedId} onChange={(e) => setForm({ ...form, bedId: e.target.value })}>
-                  <option value="">Assign later</option>
-                  {availableBeds.map((b) => (
-                    <option key={b.bedId} value={b.bedId}>
-                      {b.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
               <div>
                 <Label htmlFor="doctorId">Assigned Doctor</Label>
                 <Select
@@ -314,6 +319,21 @@ export default function ResidentsPage() {
                   {doctors.map((d) => (
                     <option key={d.userId} value={d.userId}>
                       {d.fullName}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="caretakerId">Assign Caretaker</Label>
+                <Select
+                  id="caretakerId"
+                  value={form.assignedCaretakerId}
+                  onChange={(e) => setForm({ ...form, assignedCaretakerId: e.target.value })}
+                >
+                  <option value="">No caretaker assigned</option>
+                  {caretakers.map((c) => (
+                    <option key={c.userId} value={c.userId}>
+                      {c.fullName}
                     </option>
                   ))}
                 </Select>

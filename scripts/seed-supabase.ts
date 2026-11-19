@@ -180,7 +180,40 @@ export async function seedAllData() {
         createdAt: new Date(u.createdAt),
         updatedAt: new Date(u.updatedAt),
       })
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: users.userId,
+        set: {
+          username: u.username,
+          fullName: u.fullName,
+          email: u.email,
+          roleId,
+          passwordHash: u.passwordHash,
+          mfaEnabled: u.mfaEnabled,
+          mfaSecretEncrypted: u.mfaSecretEncrypted,
+          mfaEnrolledAt: u.mfaEnrolledAt ? new Date(u.mfaEnrolledAt) : null,
+          mustChangePassword: u.mustChangePassword,
+          isActive: u.isActive,
+          isLocked: u.isLocked,
+          failedLoginCount: u.failedLoginCount,
+          updatedAt: new Date(u.updatedAt),
+        },
+      });
+  }
+
+  // Ensure only one admin account exists in Supabase
+  const adminRoleId = roleMap.get('Admin');
+  if (adminRoleId) {
+    const allAdmins = await db.select().from(users).where(eq(users.roleId, adminRoleId));
+    for (const adm of allAdmins) {
+      if (adm.userId !== '10000000-0000-4000-8000-000000000001') {
+        try {
+          await db.update(purchaseOrders).set({ createdBy: '10000000-0000-4000-8000-000000000001' }).where(eq(purchaseOrders.createdBy, adm.userId));
+          await db.delete(users).where(eq(users.userId, adm.userId));
+        } catch {
+          await db.update(users).set({ isActive: false }).where(eq(users.userId, adm.userId));
+        }
+      }
+    }
   }
 
   // 10. Rooms & Beds

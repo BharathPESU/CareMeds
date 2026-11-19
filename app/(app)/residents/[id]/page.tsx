@@ -166,9 +166,7 @@ export default function ResidentDetailPage() {
   }
 
   const { resident } = data;
-  const canManageAssignments =
-    user?.role === 'Admin' ||
-    (user?.role === 'Doctor' && resident.assignedDoctorId === user.userId);
+  const canManageAssignments = user?.role === 'Admin' || user?.role === 'Doctor';
 
   async function patchResident(payload: Record<string, unknown>, successMsg: string) {
     setBusy(true);

@@ -1,8 +1,46 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireApiAuth } from '@/lib/auth/session';
-import { buildCredentialCsv } from '@/lib/exports/csv';
 import { appendAuditLog, loadStore, persistStore } from '@/lib/store/repository';
+
+function buildCredentialTxt({
+  fullName,
+  role,
+  username,
+  temporaryPassword,
+  expiresOn,
+  facility,
+}: {
+  fullName: string;
+  role: string;
+  username: string;
+  temporaryPassword: string;
+  expiresOn: string;
+  facility: string;
+}): string {
+  return [
+    '============================================================',
+    'CAREMEDS HEALTHCARE MANAGEMENT SYSTEM',
+    'STAFF ACCOUNT LOGIN CREDENTIALS',
+    '============================================================',
+    '',
+    `Facility:          ${facility}`,
+    `Staff Member:      ${fullName}`,
+    `Assigned Role:     ${role}`,
+    `Username:          ${username}`,
+    `Password:          ${temporaryPassword}`,
+    `Issued Date:       ${new Date().toISOString().slice(0, 10)}`,
+    `Valid Until:       ${expiresOn}`,
+    '',
+    '------------------------------------------------------------',
+    'HOW TO SIGN IN:',
+    '1. Open the CareMeds login portal in your browser.',
+    `2. Select the "${role}" role option.`,
+    '3. Enter your Username and Password exactly as provided above.',
+    '4. Store these credentials safely and do not disclose them.',
+    '============================================================',
+  ].join('\n');
+}
 
 export async function GET(
   _req: NextRequest,
@@ -28,7 +66,7 @@ export async function GET(
     );
   }
 
-  const csv = buildCredentialCsv({
+  const txtContent = buildCredentialTxt({
     fullName: target.fullName,
     role: target.role,
     username: target.username,
@@ -57,10 +95,10 @@ export async function GET(
   });
   persistStore(store);
 
-  return new NextResponse(csv, {
+  return new NextResponse(txtContent, {
     headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="caremeds-credentials-${target.username}.csv"`,
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Content-Disposition': `attachment; filename="caremeds-credentials-${target.username}.txt"`,
       'Cache-Control': 'no-store',
     },
   });

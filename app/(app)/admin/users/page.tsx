@@ -59,7 +59,9 @@ export default function AdminUsersPage() {
 
   const [form, setForm] = useState({
     fullName: '',
-    role: 'Caretaker' as RoleName,
+    role: 'Doctor' as RoleName,
+    username: '',
+    password: '',
     email: '',
     phone: '',
   });
@@ -97,7 +99,7 @@ export default function AdminUsersPage() {
       toast.success(`Created ${resp.user?.role} account: ${resp.user?.username}`);
       setCreatedBannerUser(resp.user || null);
       setShowAdd(false);
-      setForm({ fullName: '', role: 'Caretaker', email: '', phone: '' });
+      setForm({ fullName: '', role: 'Doctor', username: '', password: '', email: '', phone: '' });
       await load();
     } finally {
       setBusy(false);
@@ -118,7 +120,7 @@ export default function AdminUsersPage() {
       }
       if (operation === 'reset_password' && resp.user) {
         setCreatedBannerUser(resp.user);
-        toast.success('Temporary password generated. Download the one-time Credential CSV.');
+        toast.success('Temporary password generated. Download the one-time Credential .txt file.');
       } else {
         toast.success(`User updated (${operation.replace('_', ' ')}).`);
       }
@@ -134,7 +136,7 @@ export default function AdminUsersPage() {
       const res = await fetch(`/api/admin/users/${target.userId}/credentials`, { cache: 'no-store' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.error || 'Credential CSV is no longer available.');
+        toast.error(err.error || 'Credential file is no longer available.');
         await load();
         return;
       }
@@ -142,7 +144,7 @@ export default function AdminUsersPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `caremeds-credentials-${target.username}.csv`;
+      a.download = `caremeds-credentials-${target.username}.txt`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -152,7 +154,7 @@ export default function AdminUsersPage() {
       if (createdBannerUser?.userId === target.userId) {
         setCreatedBannerUser(null);
       }
-      toast.success('Credential CSV downloaded once. Hand it to the staff member privately and delete the file.');
+      toast.success('Credentials downloaded as .txt file. You can now send this file to the staff member.');
       await load();
     } finally {
       setBusy(false);
@@ -176,7 +178,7 @@ export default function AdminUsersPage() {
             Staff &amp; Access Management
           </h1>
           <p className="text-[15px] text-[var(--cm-muted)] mt-0.5">
-            Create staff accounts with one-time credential handoff CSVs, unlock accounts, and review sign-in history.
+            Create Doctor and Caretaker accounts, download login credentials in .txt format, and manage staff access.
           </p>
         </div>
         <Button onClick={() => setShowAdd(true)}>
@@ -190,10 +192,10 @@ export default function AdminUsersPage() {
           <div className="space-y-1">
             <p className="text-[16px] font-semibold text-[var(--cm-primary)] inline-flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5" />
-              One-Time Credentials Ready for {createdBannerUser.fullName}
+              Login Credentials Ready for {createdBannerUser.fullName}
             </p>
             <p className="text-[14px] text-[var(--cm-muted)]">
-              Username: <code className="font-mono font-semibold text-[var(--cm-text)]">{createdBannerUser.username}</code> ({createdBannerUser.role}). Download the credential CSV once, hand it privately to the staff member, and delete the file immediately.
+              Username: <code className="font-mono font-semibold text-[var(--cm-text)]">{createdBannerUser.username}</code> ({createdBannerUser.role}). Download the credentials .txt file below and send it to the staff member.
             </p>
           </div>
           <Button
@@ -201,7 +203,7 @@ export default function AdminUsersPage() {
             disabled={busy || downloadedOnceIds.has(createdBannerUser.userId)}
           >
             <Download className="h-4 w-4" />
-            Download Credential CSV (One-Time)
+            Download Credentials (.txt)
           </Button>
         </div>
       )}
@@ -364,20 +366,40 @@ export default function AdminUsersPage() {
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent
           title="Create Staff Account"
-          description="CareMeds automatically generates a firstname.lastname username and a 16-character temporary password valid for 7 days."
+          description="Create Doctor and Caretaker accounts. You can specify custom credentials or leave them blank to auto-generate. Credentials can be downloaded immediately as a .txt file."
         >
           <form onSubmit={handleCreateUser} className="space-y-3.5">
             <div>
               <Label htmlFor="stName">Full Name</Label>
-              <Input id="stName" required value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="Kavita Rao" />
+              <Input id="stName" required value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="Dr. Kavita Rao" />
             </div>
             <div>
               <Label htmlFor="stRole">Role</Label>
               <Select id="stRole" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as RoleName })}>
+                <option value="Doctor">Doctor</option>
                 <option value="Caretaker">Caretaker</option>
-                <option value="Doctor">Doctor (MFA required)</option>
-                <option value="Admin">Admin (MFA required)</option>
               </Select>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="stUsername">Username (optional)</Label>
+                <Input
+                  id="stUsername"
+                  value={form.username}
+                  onChange={(e) => setForm({ ...form, username: e.target.value })}
+                  placeholder="e.g. kavita.rao"
+                />
+              </div>
+              <div>
+                <Label htmlFor="stPassword">Password (optional)</Label>
+                <Input
+                  id="stPassword"
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder="Auto-generated if empty"
+                />
+              </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>

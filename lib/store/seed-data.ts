@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { hashPassword } from '../auth/password';
+import { encryptSecret } from '../crypto';
 import type {
   AlertActionRecord,
   AlertRecord,
@@ -114,9 +115,10 @@ export function createInitialPreviewStore(): CareMedsStoreData {
 
   // Seed accounts use standard initial staff password 'CareMeds@2025'
   const lockedHash = hashPassword('CareMeds@2025');
+  const adminHash = hashPassword('admin@123');
+  const adminMfaSecretEncrypted = encryptSecret('J55RUON7Q7XCDMMEE5NNQBPRHH675BDO');
 
   const admin1Id = '10000000-0000-4000-8000-000000000001';
-  const admin2Id = '10000000-0000-4000-8000-000000000002';
   const doctor1Id = '10000000-0000-4000-8000-000000000003';
   const doctor2Id = '10000000-0000-4000-8000-000000000004';
   const caretaker1Id = '10000000-0000-4000-8000-000000000005';
@@ -250,12 +252,12 @@ export function createInitialPreviewStore(): CareMedsStoreData {
     users: [
       {
         userId: admin1Id,
-        fullName: 'Meera Krishnan',
-        username: 'meera.krishnan',
-        email: 'meera.krishnan@shantiniketan.example.in',
+        fullName: 'Facility Administrator',
+        username: 'admin',
+        email: 'admin@caremeds.local',
         phone: '+91 98201 11001',
         role: 'Admin',
-        passwordHash: lockedHash,
+        passwordHash: adminHash,
         isActive: true,
         mustChangePassword: false,
         tempPasswordExpiresAt: null,
@@ -264,34 +266,10 @@ export function createInitialPreviewStore(): CareMedsStoreData {
         isLocked: false,
         lockedAt: null,
         mfaEnabled: true,
-        mfaSecretEncrypted: null,
+        mfaSecretEncrypted: adminMfaSecretEncrypted,
         mfaEnrolledAt: isoHoursAgo(240),
         createdBy: null,
         createdAt: isoHoursAgo(480),
-        deactivatedAt: null,
-        deactivatedBy: null,
-        updatedAt: nowIso,
-      },
-      {
-        userId: admin2Id,
-        fullName: 'Vikram Menon',
-        username: 'vikram.menon',
-        email: 'vikram.menon@shantiniketan.example.in',
-        phone: '+91 98201 11002',
-        role: 'Admin',
-        passwordHash: lockedHash,
-        isActive: true,
-        mustChangePassword: false,
-        tempPasswordExpiresAt: null,
-        passwordChangedAt: isoHoursAgo(200),
-        failedLoginCount: 0,
-        isLocked: false,
-        lockedAt: null,
-        mfaEnabled: true,
-        mfaSecretEncrypted: null,
-        mfaEnrolledAt: isoHoursAgo(200),
-        createdBy: admin1Id,
-        createdAt: isoHoursAgo(420),
         deactivatedAt: null,
         deactivatedBy: null,
         updatedAt: nowIso,
@@ -900,7 +878,7 @@ export function createInitialPreviewStore(): CareMedsStoreData {
         poId: '59000000-0000-4000-8000-000000000001',
         supplierId: sup2,
         status: 'Awaiting approval',
-        createdBy: admin2Id,
+        createdBy: admin1Id,
         approvedBy: null,
         createdAt: isoHoursAgo(8),
         approvedAt: null,

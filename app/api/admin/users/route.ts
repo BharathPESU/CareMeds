@@ -64,12 +64,34 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if ((parsed.data.role as string) === 'Admin') {
+    return NextResponse.json(
+      { error: 'Only one administrator is permitted in the system. You can only create Doctors and Caretakers.' },
+      { status: 403 }
+    );
+  }
+
   const store = loadStore();
-  const username = generateUsername(
-    parsed.data.fullName,
-    store.users.map((u) => u.username)
-  );
-  const tempPassword = generateTemporaryPassword(16);
+
+  let username = parsed.data.username?.trim();
+  if (username) {
+    const exists = store.users.some(
+      (u) => u.username.toLowerCase() === username!.toLowerCase()
+    );
+    if (exists) {
+      return NextResponse.json(
+        { error: `Username "${username}" is already taken. Please choose another.` },
+        { status: 409 }
+      );
+    }
+  } else {
+    username = generateUsername(
+      parsed.data.fullName,
+      store.users.map((u) => u.username)
+    );
+  }
+
+  const initialPassword = parsed.data.password?.trim() || generateTemporaryPassword(16);
   const now = new Date();
   const nowIso = now.toISOString();
   const expiresAtIso = new Date(now.getTime() + 7 * 86400_000).toISOString();
@@ -82,9 +104,9 @@ export async function POST(req: NextRequest) {
     email: parsed.data.email || null,
     phone: parsed.data.phone || null,
     role: parsed.data.role,
-    passwordHash: hashPassword(tempPassword),
+    passwordHash: hashPassword(initialPassword),
     isActive: true,
-    mustChangePassword: true,
+    mustChangePassword: false,
     tempPasswordExpiresAt: expiresAtIso,
     passwordChangedAt: null,
     failedLoginCount: 0,
@@ -93,7 +115,7 @@ export async function POST(req: NextRequest) {
     mfaEnabled: false,
     mfaSecretEncrypted: null,
     mfaEnrolledAt: null,
-    pendingTempPasswordForExport: tempPassword,
+    pendingTempPasswordForExport: initialPassword,
     createdBy: auth.ctx.user.userId,
     createdAt: nowIso,
     deactivatedAt: null,

@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { username, password, totpCode, recoveryCode } = parsed.data;
+  const { role, username, password, totpCode, recoveryCode } = parsed.data;
   const store = loadStore();
   const user = store.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
   const nowIso = new Date().toISOString();
@@ -60,6 +60,15 @@ export async function POST(req: NextRequest) {
     recordLoginAttempt(false, user?.userId ?? null);
     persistStore(store);
     return NextResponse.json({ error: INVALID_CREDENTIALS_MSG }, { status: 401 });
+  }
+
+  if (role && user.role !== role) {
+    recordLoginAttempt(false, user.userId);
+    persistStore(store);
+    return NextResponse.json(
+      { error: `Account "${username}" is registered as ${user.role}, not ${role}. Please select ${user.role} to sign in.` },
+      { status: 401 }
+    );
   }
 
   if (user.isLocked) {

@@ -352,12 +352,11 @@ export async function PATCH(
     return NextResponse.json({ ok: true, note });
   }
 
-  // 6. Assign caretaker (Admin or assigned Doctor only)
+  // 6. Assign caretaker (Admin or Doctor)
   if (body.operation === 'assign_caretaker') {
-    const allowed =
-      actor.role === 'Admin' || canDoctorManageResident(actor, resident);
+    const allowed = actor.role === 'Admin' || actor.role === 'Doctor';
     if (!allowed) {
-      return NextResponse.json({ error: 'Only Admins or the resident’s assigned Doctor can assign caretakers.' }, { status: 403 });
+      return NextResponse.json({ error: 'Only Admins or Doctors can assign caretakers.' }, { status: 403 });
     }
     const caretaker = store.users.find(
       (u) => u.userId === body.caretakerId && u.role === 'Caretaker' && u.isActive
@@ -394,10 +393,9 @@ export async function PATCH(
 
   // 7. End caretaker assignment (never deleted — sets ended_at and ended_by)
   if (body.operation === 'end_assignment') {
-    const allowed =
-      actor.role === 'Admin' || canDoctorManageResident(actor, resident);
+    const allowed = actor.role === 'Admin' || actor.role === 'Doctor';
     if (!allowed) {
-      return NextResponse.json({ error: 'Only Admins or the assigned Doctor can end assignments.' }, { status: 403 });
+      return NextResponse.json({ error: 'Only Admins or Doctors can end assignments.' }, { status: 403 });
     }
     const assignment = store.careAssignments.find(
       (a) => a.assignmentId === body.assignmentId && a.residentId === id && a.endedAt === null

@@ -7,16 +7,21 @@ import {
   HeartPulse,
   KeyRound,
   Lock,
+  Shield,
+  Stethoscope,
+  User,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/components/providers/CareMedsProviders';
 import { Button } from '@/components/ui/button';
 import { Card, Input, Label } from '@/components/ui/primitives';
+import type { RoleName } from '@/lib/types';
 
 export default function LoginPage() {
   const router = useRouter();
   const { authenticated, loading, setupCompleted, refreshAuth } = useAuth();
 
+  const [selectedRole, setSelectedRole] = useState<RoleName>('Admin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [mfaRequired, setMfaRequired] = useState(false);
@@ -45,9 +50,12 @@ export default function LoginPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          role: selectedRole,
           username: username.trim(),
           password,
-          ...(mfaRequired && !useRecovery ? { totpCode: totpCode.trim() } : {}),
+          ...((selectedRole === 'Admin' || mfaRequired) && !useRecovery && totpCode
+            ? { totpCode: totpCode.trim() }
+            : {}),
           ...(mfaRequired && useRecovery ? { recoveryCode: recoveryCode.trim() } : {}),
         }),
       });
@@ -98,10 +106,40 @@ export default function LoginPage() {
             <div>
               <h2 className="text-[20px] font-semibold text-[var(--cm-text)]">Staff Sign In</h2>
               <p className="text-[14px] text-[var(--cm-muted)] mt-0.5">
-                {mfaRequired
-                  ? 'Two-factor verification is enabled on this account.'
-                  : 'Use your facility username and password.'}
+                Select your assigned role and enter your facility credentials.
               </p>
+            </div>
+
+            <div>
+              <Label className="block text-[13px] font-medium text-[var(--cm-muted)] mb-1.5">
+                Select Role
+              </Label>
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-[var(--cm-surface-subtle)] rounded-[14px]">
+                {(['Admin', 'Doctor', 'Caretaker'] as const).map((r) => {
+                  const isSelected = selectedRole === r;
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => {
+                        setSelectedRole(r);
+                        setError(null);
+                        setMfaRequired(false);
+                      }}
+                      className={`flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-[10px] text-[13px] font-semibold transition-all ${
+                        isSelected
+                          ? 'bg-[var(--cm-primary)] text-[var(--cm-primary-foreground)] shadow-sm'
+                          : 'text-[var(--cm-muted)] hover:text-[var(--cm-text)]'
+                      }`}
+                    >
+                      {r === 'Admin' && <Shield className="h-3.5 w-3.5" />}
+                      {r === 'Doctor' && <Stethoscope className="h-3.5 w-3.5" />}
+                      {r === 'Caretaker' && <User className="h-3.5 w-3.5" />}
+                      <span>{r}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {error && (
@@ -126,7 +164,7 @@ export default function LoginPage() {
                     required
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="firstname.lastname"
+                    placeholder={selectedRole === 'Admin' ? 'admin' : 'firstname.lastname'}
                   />
                 </div>
                 <div>
@@ -139,14 +177,34 @@ export default function LoginPage() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter your password"
+                    placeholder={selectedRole === 'Admin' ? 'admin@123' : 'Enter your password'}
                   />
                 </div>
+
+                {selectedRole === 'Admin' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <Label htmlFor="adminTotp">6-Digit Authenticator Code (TOTP)</Label>
+                      <span className="text-[12px] text-[var(--cm-muted)] font-normal">Authenticator App</span>
+                    </div>
+                    <Input
+                      id="adminTotp"
+                      name="adminTotp"
+                      inputMode="numeric"
+                      maxLength={6}
+                      required
+                      value={totpCode}
+                      onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="000000"
+                      className="font-mono text-center tracking-[0.35em] text-[18px]"
+                    />
+                  </div>
+                )}
               </>
             ) : (
               <div className="space-y-3">
                 <div className="rounded-[12px] bg-[var(--cm-surface-subtle)] px-3.5 py-2.5 text-[14px] text-[var(--cm-muted)] flex items-center justify-between">
-                  <span>Signing in as <strong className="text-[var(--cm-text)]">{username}</strong></span>
+                  <span>Signing in as <strong className="text-[var(--cm-text)]">{username}</strong> ({selectedRole})</span>
                   <button
                     type="button"
                     className="text-[var(--cm-primary)] font-medium underline text-[13px] min-h-[36px] px-2"
