@@ -98,6 +98,7 @@ export async function POST(req: NextRequest) {
   let rawAnswer = '';
   let usedKeyIndex = startIndex;
   let lastError: Error | null = null;
+  const systemPrompt = buildAssistantSystemPrompt(auth.ctx.user.role);
 
   // Failover loop: rotate through keys starting from startIndex until one succeeds
   for (let attempt = 0; attempt < totalKeys; attempt++) {
@@ -108,19 +109,20 @@ export async function POST(req: NextRequest) {
       const ai = new GoogleGenAI({
         apiKey: currentKey,
         httpOptions: {
+          apiVersion: 'v1beta',
           timeout: 10000,
           headers: { 'User-Agent': 'aistudio-build' },
         },
       });
 
-      // Try gemini-2.5-flash; fallback to gemini-3.8-flash if model unavailable
+      // Try gemini-2.5-flash; fallback to gemini-3.8-flash if model deprecated for that key
       let response: { text?: string } | null = null;
       try {
         response = await ai.models.generateContent({
           model: 'gemini-2.5-flash',
           contents: parsed.data.message,
           config: {
-            systemInstruction: buildAssistantSystemPrompt(auth.ctx.user.role),
+            systemInstruction: systemPrompt,
           },
         });
       } catch (err: unknown) {
@@ -130,7 +132,7 @@ export async function POST(req: NextRequest) {
             model: 'gemini-3.8-flash',
             contents: parsed.data.message,
             config: {
-              systemInstruction: buildAssistantSystemPrompt(auth.ctx.user.role),
+              systemInstruction: systemPrompt,
             },
           });
         } else {
@@ -150,7 +152,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!rawAnswer) {
-    console.error('[Care Assistant] All Gemini API keys failed:', lastError?.message);
+    console.error('[Care Assistant] All Gemini API keys failed in failover:', lastError?.message);
     return NextResponse.json(
       {
         error:
