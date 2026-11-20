@@ -265,6 +265,11 @@ export default function AssistantPage() {
       if (!ok) {
         if (data.blockedByGuardrail) {
           setGuardrailError(data.error || 'Resident personal information cannot be sent to the Care Assistant.');
+        } else if (data.error?.toLowerCase().includes('authentication') || data.error?.toLowerCase().includes('login')) {
+          toast.error('Session expired. Redirecting to login...');
+          setTimeout(() => {
+            window.location.href = '/login?next=/assistant';
+          }, 1200);
         } else {
           toast.error(data.error || 'Could not reach Care Assistant.');
         }

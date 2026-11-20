@@ -17,6 +17,8 @@ import {
   decryptSecret,
   deriveCsrfToken,
   sha256Hex,
+  signSessionToken,
+  verifySessionToken,
 } from '../../lib/crypto';
 import {
   generateRecoveryCodes,
@@ -347,4 +349,33 @@ test('Credential CSV format, Care Assistant zero-PII guardrails, and time utilit
     canUndoDose('2026-11-19T09:10:00Z', 'ct-1', 'ct-2', new Date('2026-11-19T09:08:00Z')),
     false
   );
+});
+
+test('Cryptographically signed session tokens for serverless multi-container persistence', () => {
+  const payload = {
+    userId: '10000000-0000-4000-8000-000000000001',
+    role: 'Admin',
+    exp: Date.now() + 3600_000,
+    iat: Date.now(),
+    nonce: 'test-nonce-12345',
+  };
+
+  const token = signSessionToken(payload);
+  assert.ok(token.includes('.'));
+
+  const verified = verifySessionToken(token);
+  assert.ok(verified !== null);
+  assert.equal(verified?.userId, payload.userId);
+  assert.equal(verified?.role, 'Admin');
+
+  // Tampered payload fails verification
+  const tamperedToken = 'tamperedData.' + token.split('.')[1];
+  assert.equal(verifySessionToken(tamperedToken), null);
+
+  // Expired token fails verification
+  const expiredToken = signSessionToken({
+    ...payload,
+    exp: Date.now() - 1000,
+  });
+  assert.equal(verifySessionToken(expiredToken), null);
 });

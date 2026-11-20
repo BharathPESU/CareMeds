@@ -1,7 +1,14 @@
 import { cookies } from 'next/headers';
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { deriveCsrfToken, generateOpaqueToken, safeCompare, sha256Hex } from '../crypto';
+import {
+  deriveCsrfToken,
+  generateOpaqueToken,
+  safeCompare,
+  sha256Hex,
+  signSessionToken,
+  verifySessionToken,
+} from '../crypto';
 import { can, type PermissionCode } from '../permissions/permissions';
 import { loadStore, persistStore, toSafeUser } from '../store/repository';
 import type { SafeUser, SessionRecord, UserRecord } from '../types';
@@ -22,11 +29,21 @@ export async function createAuthenticatedSession(user: UserRecord): Promise<{
   expiresAt: Date;
 }> {
   const store = loadStore();
-  const maxHours = Number(store.systemSettings.session_max_hours || '12');
-  const rawToken = generateOpaqueToken(32);
-  const tokenHash = sha256Hex(rawToken);
+  const maxHours = Number(store.systemSettings.session_max_hours || '168'); // 7 days default
   const now = new Date();
   const expiresAt = new Date(now.getTime() + maxHours * 3600_000);
+  const nonce = generateOpaqueToken(16);
+
+  // Create a cryptographically signed session token that survives serverless cold-starts & multi-containers
+  const rawToken = signSessionToken({
+    userId: user.userId,
+    role: user.role,
+    exp: expiresAt.getTime(),
+    iat: now.getTime(),
+    nonce,
+  });
+
+  const tokenHash = sha256Hex(rawToken);
 
   store.sessions.push({
     sessionId: randomUUID(),
@@ -55,10 +72,11 @@ export function attachSessionCookies(
 ): NextResponse {
   const isProd = process.env.NODE_ENV === 'production';
 
+  // Use 'lax' sameSite so mobile browsers (Chrome, Safari) reliably send the session cookie on fetch requests
   response.cookies.set(SESSION_COOKIE_NAME, rawToken, {
     httpOnly: true,
     secure: isProd,
-    sameSite: 'strict',
+    sameSite: 'lax',
     path: '/',
     expires: expiresAt,
   });
@@ -66,7 +84,7 @@ export function attachSessionCookies(
   response.cookies.set(CSRF_COOKIE_NAME, csrfToken, {
     httpOnly: false,
     secure: isProd,
-    sameSite: 'strict',
+    sameSite: 'lax',
     path: '/',
     expires: expiresAt,
   });
@@ -77,13 +95,13 @@ export function attachSessionCookies(
 export function clearSessionCookies(response: NextResponse): NextResponse {
   response.cookies.set(SESSION_COOKIE_NAME, '', {
     httpOnly: true,
-    sameSite: 'strict',
+    sameSite: 'lax',
     path: '/',
     maxAge: 0,
   });
   response.cookies.set(CSRF_COOKIE_NAME, '', {
     httpOnly: false,
-    sameSite: 'strict',
+    sameSite: 'lax',
     path: '/',
     maxAge: 0,
   });
@@ -97,28 +115,67 @@ export async function getSessionContext(): Promise<ActiveSessionContext | null> 
 
   const tokenHash = sha256Hex(rawToken);
   const store = loadStore();
-  const session = store.sessions.find((s) => s.tokenHash === tokenHash);
-  if (!session || session.revokedAt) return null;
-
   const now = Date.now();
-  const expiresAtMs = new Date(session.expiresAt).getTime();
-  const idleMinutes = Number(store.systemSettings.session_idle_minutes || '15');
-  const lastSeenMs = new Date(session.lastSeenAt).getTime();
 
-  if (now > expiresAtMs || now - lastSeenMs > idleMinutes * 60_000) {
-    session.revokedAt = new Date(now).toISOString();
-    persistStore(store);
+  // Try verifying cryptographically signed session token first (multi-container / cold-start resilient)
+  const signedPayload = verifySessionToken(rawToken);
+  let userId: string | null = null;
+  let expiresAtMs = 0;
+
+  if (signedPayload) {
+    userId = signedPayload.userId;
+    expiresAtMs = signedPayload.exp;
+  } else {
+    // Fallback: look up in store.sessions for legacy opaque tokens
+    const legacySession = store.sessions.find((s) => s.tokenHash === tokenHash);
+    if (legacySession && !legacySession.revokedAt) {
+      userId = legacySession.userId;
+      expiresAtMs = new Date(legacySession.expiresAt).getTime();
+    }
+  }
+
+  if (!userId) return null;
+
+  // Check if session has been explicitly revoked
+  let session = store.sessions.find((s) => s.tokenHash === tokenHash);
+  if (session?.revokedAt) {
     return null;
   }
 
-  const user = store.users.find((u) => u.userId === session.userId);
+  // Check absolute expiration
+  if (now > expiresAtMs) {
+    if (session) {
+      session.revokedAt = new Date(now).toISOString();
+      persistStore(store);
+    }
+    return null;
+  }
+
+  // Look up user
+  const user = store.users.find((u) => u.userId === userId);
   if (!user || !user.isActive || user.isLocked) {
-    session.revokedAt = new Date(now).toISOString();
-    persistStore(store);
+    if (session) {
+      session.revokedAt = new Date(now).toISOString();
+      persistStore(store);
+    }
     return null;
   }
 
-  session.lastSeenAt = new Date(now).toISOString();
+  // If this serverless container hasn't seen this session before, register/rehydrate it
+  if (!session) {
+    session = {
+      sessionId: randomUUID(),
+      userId: user.userId,
+      tokenHash,
+      createdAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      expiresAt: new Date(expiresAtMs).toISOString(),
+      revokedAt: null,
+    };
+    store.sessions.push(session);
+  } else {
+    session.lastSeenAt = new Date().toISOString();
+  }
   persistStore(store);
 
   return {
@@ -144,7 +201,7 @@ export async function revokeCurrentSession(): Promise<void> {
 
 export function verifyCsrfHeader(request: Request, expectedCsrf: string): boolean {
   const headerToken = request.headers.get('x-csrf-token');
-  if (!headerToken) return true; // SameSite=Strict cookie protects API routes; verify when header sent
+  if (!headerToken) return true; // SameSite=Lax cookie protects API routes; verify when header sent
   return safeCompare(headerToken, expectedCsrf);
 }
 

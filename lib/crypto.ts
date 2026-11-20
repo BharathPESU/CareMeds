@@ -23,6 +23,54 @@ export function generateOpaqueToken(bytes = 32): string {
   return randomBytes(bytes).toString('base64url');
 }
 
+export interface SignedSessionPayload {
+  userId: string;
+  role: string;
+  exp: number; // millisecond timestamp
+  iat: number; // millisecond timestamp
+  nonce: string;
+}
+
+/**
+ * Creates a cryptographically signed session token using HMAC-SHA256 and SESSION_SECRET.
+ * This allows stateless verification across multiple serverless lambda containers on Vercel.
+ */
+export function signSessionToken(payload: SignedSessionPayload): string {
+  const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = createHmac('sha256', getSessionSecret())
+    .update(`session:${data}`)
+    .digest('base64url');
+  return `${data}.${sig}`;
+}
+
+/**
+ * Verifies a signed session token. Returns the decoded payload if valid and not expired, or null.
+ */
+export function verifySessionToken(token: string): SignedSessionPayload | null {
+  if (!token || typeof token !== 'string') return null;
+  const dotIndex = token.indexOf('.');
+  if (dotIndex <= 0) return null;
+  const data = token.slice(0, dotIndex);
+  const sig = token.slice(dotIndex + 1);
+  if (!data || !sig) return null;
+
+  const expectedSig = createHmac('sha256', getSessionSecret())
+    .update(`session:${data}`)
+    .digest('base64url');
+
+  if (!safeCompare(sig, expectedSig)) return null;
+
+  try {
+    const raw = Buffer.from(data, 'base64url').toString('utf8');
+    const parsed = JSON.parse(raw) as SignedSessionPayload;
+    if (!parsed.userId || typeof parsed.exp !== 'number') return null;
+    if (Date.now() > parsed.exp) return null; // Expired
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function encryptSecret(plaintext: string): string {
   const key = getMfaKeyBuffer();
   const iv = randomBytes(12);

@@ -221,8 +221,8 @@ export function createInitialPreviewStore(): CareMedsStoreData {
     },
     systemSettings: {
       setup_completed: 'true',
-      session_idle_minutes: '15',
-      session_max_hours: '12',
+      session_idle_minutes: '1440',
+      session_max_hours: '168',
       lockout_threshold: '5',
       require_mfa_caretakers: 'false',
       expiry_warning_days: '60',
