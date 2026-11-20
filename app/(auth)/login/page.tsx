@@ -177,7 +177,7 @@ export default function LoginPage() {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder={selectedRole === 'Admin' ? 'admin@123' : 'Enter your password'}
+                    placeholder="Enter your password"
                   />
                 </div>
 

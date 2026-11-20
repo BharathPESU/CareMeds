@@ -113,10 +113,14 @@ export function createInitialPreviewStore(): CareMedsStoreData {
   const nowIso = new Date().toISOString();
   const todayIso = nowIso.slice(0, 10);
 
-  // Seed accounts use standard initial staff password 'CareMeds@2025'
-  const lockedHash = hashPassword('CareMeds@2025');
-  const adminHash = hashPassword('admin@123');
-  const adminMfaSecretEncrypted = encryptSecret('J55RUON7Q7XCDMMEE5NNQBPRHH675BDO');
+  // Seed accounts use initial credentials loaded securely from environment variables
+  const staffInitialPassword = process.env.STAFF_INITIAL_PASSWORD || 'CareMeds@StaffPass2026';
+  const adminInitialPassword = process.env.ADMIN_INITIAL_PASSWORD || 'Admin@CareMeds2026!';
+  const adminMfaSecret = process.env.ADMIN_MFA_TOTP_SECRET || 'GAXDEQ2WIFQEI3SFLAZDEVSUKBKVGRKG';
+
+  const lockedHash = hashPassword(staffInitialPassword);
+  const adminHash = hashPassword(adminInitialPassword);
+  const adminMfaSecretEncrypted = encryptSecret(adminMfaSecret);
 
   const admin1Id = '10000000-0000-4000-8000-000000000001';
   const doctor1Id = '10000000-0000-4000-8000-000000000003';
